@@ -1003,7 +1003,7 @@ async function applyLabelsToMessages(messages, label) {
                             }
                         }
                     } catch (createError) {
-                        console.error(`Failed to create folder "${label}":`, createError);
+                        console.error('Failed to create folder "%s":', label, createError);
                     }
                 }
             }

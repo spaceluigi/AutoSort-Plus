@@ -82,6 +82,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     let loadedFolders = [];
     let geminiKeys = []; // Array to store multiple Gemini API keys
     
+    // Helper function to escape HTML entities (prevents XSS vulnerabilities)
+    function escapeHTML(str) {
+        if (str === undefined || str === null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+    
     // AI Provider configurations
     const aiProviders = {
         gemini: {
@@ -302,30 +313,60 @@ document.addEventListener('DOMContentLoaded', async function() {
             // Mask key for display
             const maskedKey = key ? `...${key.slice(-8)}` : 'Not set';
             
-            card.innerHTML = `
-                <div class="key-header">
-                    <span class="key-title">Key ${index + 1}: ${maskedKey}</span>
-                    ${statusBadge}
-                </div>
-                <div class="key-stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Usage:</span>
-                        <span class="stat-value">${rateLimit.dailyCount}/20</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Last:</span>
-                        <span class="stat-value">${lastRequestText}</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Resets:</span>
-                        <span class="stat-value">${resetText}</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Available:</span>
-                        <span class="stat-value">${20 - rateLimit.dailyCount}</span>
-                    </div>
-                </div>
-            `;
+            card.textContent = '';
+            
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'key-header';
+            
+            const keyTitleSpan = document.createElement('span');
+            keyTitleSpan.className = 'key-title';
+            keyTitleSpan.textContent = `Key ${index + 1}: ${maskedKey}`;
+            
+            const badgeSpan = document.createElement('span');
+            if (isActive) {
+                badgeSpan.className = 'key-status active';
+                badgeSpan.textContent = '🔵 ACTIVE';
+            } else if (rateLimit.dailyCount >= 20) {
+                badgeSpan.className = 'key-status limit';
+                badgeSpan.textContent = '🔴 LIMIT';
+            } else if (rateLimit.dailyCount >= 15) {
+                badgeSpan.className = 'key-status warning';
+                badgeSpan.textContent = '🟡 NEAR LIMIT';
+            } else {
+                badgeSpan.className = 'key-status ready';
+                badgeSpan.textContent = '🟢 READY';
+            }
+            
+            headerDiv.appendChild(keyTitleSpan);
+            headerDiv.appendChild(badgeSpan);
+            
+            const statsDiv = document.createElement('div');
+            statsDiv.className = 'key-stats';
+            
+            const addStatItem = (label, value) => {
+                const item = document.createElement('div');
+                item.className = 'stat-item';
+                
+                const labelSpan = document.createElement('span');
+                labelSpan.className = 'stat-label';
+                labelSpan.textContent = label;
+                
+                const valueSpan = document.createElement('span');
+                valueSpan.className = 'stat-value';
+                valueSpan.textContent = value;
+                
+                item.appendChild(labelSpan);
+                item.appendChild(valueSpan);
+                statsDiv.appendChild(item);
+            };
+            
+            addStatItem('Usage:', `${rateLimit.dailyCount}/20`);
+            addStatItem('Last:', lastRequestText);
+            addStatItem('Resets:', resetText);
+            addStatItem('Available:', (20 - rateLimit.dailyCount).toString());
+            
+            card.appendChild(headerDiv);
+            card.appendChild(statsDiv);
             
             container.appendChild(card);
         });
@@ -465,21 +506,21 @@ document.addEventListener('DOMContentLoaded', async function() {
                 statusSpan.textContent = '⚠️ Limit reached';
                 statusSpan.className = 'key-test-result error';
                 statusSpan.title = 'This key has reached its daily rate limit (20/day). Will reset in ~24 hours.';
-                console.error(`Key #${index + 1} has reached rate limit (429)`);
+                console.error('Key #%d has reached rate limit (429)', index + 1);
             } else if (response.status === 401 || response.status === 403) {
                 statusSpan.textContent = '✗ Invalid key';
                 statusSpan.className = 'key-test-result error';
                 statusSpan.title = 'API key is invalid or expired. Check your key in Google AI Studio.';
-                console.error(`Key #${index + 1} test failed: ${response.status}`);
+                console.error('Key #%d test failed: %s', index + 1, response.status);
             } else {
                 statusSpan.textContent = `✗ Failed (${response.status})`;
                 statusSpan.className = 'key-test-result error';
-                console.error(`Key #${index + 1} test failed:`, response.status);
+                console.error('Key #%d test failed:', index + 1, response.status);
             }
         } catch (error) {
             statusSpan.textContent = `✗ Error`;
             statusSpan.className = 'key-test-result error';
-            console.error(`Key #${index + 1} test error:`, error);
+            console.error('Key #%d test error:', index + 1, error);
         }
     }
     
@@ -772,12 +813,19 @@ document.addEventListener('DOMContentLoaded', async function() {
                 return;
             }
             
-            // Show folder preview
-            folderCount.textContent = loadedFolders.length;
-            foldersPreview.innerHTML = loadedFolders
-                .slice(0, 10)
-                .map(f => `<div class="folder-preview-item">${f}</div>`)
-                .join('') + (loadedFolders.length > 10 ? `<div class="folder-preview-item">...and ${loadedFolders.length - 10} more</div>` : '');
+            foldersPreview.textContent = '';
+            loadedFolders.slice(0, 10).forEach(f => {
+                const item = document.createElement('div');
+                item.className = 'folder-preview-item';
+                item.textContent = f;
+                foldersPreview.appendChild(item);
+            });
+            if (loadedFolders.length > 10) {
+                const moreItem = document.createElement('div');
+                moreItem.className = 'folder-preview-item';
+                moreItem.textContent = `...and ${loadedFolders.length - 10} more`;
+                foldersPreview.appendChild(moreItem);
+            }
             
             folderSelection.style.display = 'block';
         } catch (error) {
@@ -1318,14 +1366,31 @@ document.addEventListener('DOMContentLoaded', async function() {
         const data = await browser.storage.local.get('moveHistory');
         const history = data.moveHistory || [];
         
-        historyBody.innerHTML = history.map(entry => `
-            <tr>
-                <td class="timestamp">${formatTimestamp(entry.timestamp)}</td>
-                <td>${entry.subject}</td>
-                <td class="${entry.status.toLowerCase()}">${entry.status}</td>
-                <td>${entry.destination}</td>
-            </tr>
-        `).join('');
+        historyBody.textContent = '';
+        history.forEach(entry => {
+            const tr = document.createElement('tr');
+            
+            const tdTime = document.createElement('td');
+            tdTime.className = 'timestamp';
+            tdTime.textContent = formatTimestamp(entry.timestamp);
+            
+            const tdSubject = document.createElement('td');
+            tdSubject.textContent = entry.subject;
+            
+            const tdStatus = document.createElement('td');
+            tdStatus.className = entry.status.toLowerCase();
+            tdStatus.textContent = entry.status;
+            
+            const tdDest = document.createElement('td');
+            tdDest.textContent = entry.destination;
+            
+            tr.appendChild(tdTime);
+            tr.appendChild(tdSubject);
+            tr.appendChild(tdStatus);
+            tr.appendChild(tdDest);
+            
+            historyBody.appendChild(tr);
+        });
     }
 
     // Function to clear history
