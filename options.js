@@ -1854,22 +1854,44 @@ You MUST respond with a single valid JSON object containing exactly the keys "kn
 CRITICAL: Your entire output must be parseable as a valid JSON object. Do not include markdown code block backticks (like \`\`\`json) or any preamble or explanation.`;
 
                 // 8. Make Generative Language fetch
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeApiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            parts: [{ text: promptPayload }]
-                        }],
-                        generationConfig: {
-                            responseMimeType: "application/json"
-                        }
-                    })
-                });
-                
-                const resData = await response.json();
-                if (!response.ok) {
-                    throw new Error(resData.error?.message || "Failed to contact Google Generative Language API");
+                let response;
+                let resData;
+                try {
+                    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeApiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [{ text: promptPayload }]
+                            }],
+                            generationConfig: {
+                                responseMimeType: "application/json"
+                            }
+                        })
+                    });
+                    
+                    resData = await response.json();
+                    if (!response.ok) {
+                        throw new Error(resData.error?.message || "Structured JSON response not supported by this model.");
+                    }
+                } catch (jsonErr) {
+                    console.warn("Structured JSON request failed or unsupported. Retrying with basic raw prompt...", jsonErr);
+                    
+                    // Resilient fallback: Retry without strict responseMimeType constraints
+                    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeApiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [{ text: promptPayload }]
+                            }]
+                        })
+                    });
+                    
+                    resData = await response.json();
+                    if (!response.ok) {
+                        throw new Error(resData.error?.message || "Failed to contact Google Generative Language API");
+                    }
                 }
                 
                 let rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -1883,7 +1905,24 @@ CRITICAL: Your entire output must be parseable as a valid JSON object. Do not in
                     rawText = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
                 }
                 
-                const resultObj = JSON.parse(rawText);
+                // Extract outermost JSON block in case the model added conversational prefix/suffix
+                function extractJsonBlock(text) {
+                    const startIdx = text.indexOf('{');
+                    const endIdx = text.lastIndexOf('}');
+                    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+                        return text.substring(startIdx, endIdx + 1);
+                    }
+                    return text;
+                }
+                
+                let resultObj;
+                try {
+                    resultObj = JSON.parse(extractJsonBlock(rawText));
+                } catch (parseErr) {
+                    console.error("JSON parse failure. Raw text was:", rawText);
+                    throw new Error("AI output was not in a valid JSON structure. Please try again.");
+                }
+                
                 updateOnboardingProgress(90, "Rendering visualizers...");
                 
                 // 9. Paint Visuals
@@ -1912,7 +1951,9 @@ CRITICAL: Your entire output must be parseable as a valid JSON object. Do not in
         proposedArchitectureList.textContent = '';
         
         // 1. Render Knowledge Graph Nodes
-        const nodes = data.knowledgeGraph?.nodes || [];
+        const graphObj = data.knowledgeGraph || data.knowledge_graph || data.knowledgegraph || data.graph || data;
+        const nodes = graphObj?.nodes || data.nodes || [];
+        
         if (nodes.length === 0) {
             const placeholder = document.createElement('div');
             placeholder.textContent = 'No relationship nodes extracted.';
@@ -1922,13 +1963,16 @@ CRITICAL: Your entire output must be parseable as a valid JSON object. Do not in
         } else {
             nodes.forEach(node => {
                 const nodePill = document.createElement('div');
-                nodePill.className = `graph-node type-${node.type || 'topic'}`;
+                const nodeType = node.type || 'topic';
+                nodePill.className = `graph-node type-${nodeType}`;
+                
+                const nodeLabel = node.label || node.name || node.id || 'Node';
                 
                 // Add Trash icon for Toss nodes
-                if (node.type === 'toss') {
-                    nodePill.textContent = `🗑️ ${node.label}`;
+                if (nodeType === 'toss') {
+                    nodePill.textContent = `🗑️ ${nodeLabel}`;
                 } else {
-                    nodePill.textContent = node.label;
+                    nodePill.textContent = nodeLabel;
                 }
                 
                 graphNodesContainer.appendChild(nodePill);
@@ -1936,33 +1980,48 @@ CRITICAL: Your entire output must be parseable as a valid JSON object. Do not in
         }
         
         // 2. Render Proposed Folders
-        const suggestions = data.proposedArchitecture || [];
+        let suggestions = data.proposedArchitecture || data.proposed_architecture || data.proposedarchitecture || data.architecture || data.categories || data.folders || data.suggestions || [];
+        
+        // If the AI returned suggestions as a key-value map/object instead of an array
+        if (suggestions && typeof suggestions === 'object' && !Array.isArray(suggestions)) {
+            suggestions = Object.keys(suggestions).map(key => {
+                return {
+                    category: key,
+                    rationale: typeof suggestions[key] === 'string' ? suggestions[key] : JSON.stringify(suggestions[key])
+                };
+            });
+        }
+        
         if (suggestions.length === 0) {
             const placeholder = document.createElement('div');
             placeholder.textContent = 'No custom category layouts proposed.';
             placeholder.style.padding = '10px';
+            placeholder.style.color = '#64748b';
             proposedArchitectureList.appendChild(placeholder);
         } else {
             suggestions.forEach((item, index) => {
                 const card = document.createElement('div');
                 card.className = 'proposed-category-card';
                 
+                const catName = item.category || item.folder || item.name || item.label || `Category ${index + 1}`;
+                const catRationale = item.rationale || item.reason || item.description || item.explanation || 'Fits recurring patterns in your mailbox.';
+                
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.id = `prop-cat-${index}`;
                 checkbox.checked = true;
-                checkbox.dataset.category = item.category;
+                checkbox.dataset.category = catName;
                 
                 const details = document.createElement('div');
                 details.className = 'proposed-category-details';
                 
                 const name = document.createElement('div');
                 name.className = 'proposed-category-name';
-                name.textContent = item.category;
+                name.textContent = catName;
                 
                 const rationale = document.createElement('div');
                 rationale.className = 'proposed-category-rationale';
-                rationale.textContent = item.rationale;
+                rationale.textContent = catRationale;
                 
                 details.appendChild(name);
                 details.appendChild(rationale);
