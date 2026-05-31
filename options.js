@@ -389,6 +389,33 @@ document.addEventListener('DOMContentLoaded', async function() {
                 currentSettings.geminiApiKeys = validGeminiKeys;
                 currentSettings.currentGeminiKeyIndex = 0;
                 
+                // Write active model values from the DOM to the settings object
+                currentSettings.aiProvider = aiProviderSelect.value;
+                currentSettings.enableAi = document.getElementById('enable-ai').checked;
+                currentSettings.enableLogging = document.getElementById('enable-logging').checked;
+                currentSettings.geminiPaidPlan = geminiPaidCheckbox.checked;
+                
+                const geminiModelSelect = document.getElementById('gemini-model');
+                if (geminiModelSelect) {
+                    currentSettings.geminiModel = geminiModelSelect.value;
+                }
+                const geminiCustomModelInput = document.getElementById('gemini-custom-model');
+                if (geminiCustomModelInput) {
+                    currentSettings.geminiCustomModel = geminiCustomModelInput.value.trim();
+                }
+                const finalCheckCheckbox = document.getElementById('gemini-enable-final-check');
+                if (finalCheckCheckbox) {
+                    currentSettings.geminiEnableFinalCheck = finalCheckCheckbox.checked;
+                }
+                const finalCheckModelSelect = document.getElementById('gemini-final-check-model');
+                if (finalCheckModelSelect) {
+                    currentSettings.geminiFinalCheckModel = finalCheckModelSelect.value;
+                }
+                const finalCheckCustomInput = document.getElementById('gemini-final-check-custom-model');
+                if (finalCheckCustomInput) {
+                    currentSettings.geminiFinalCheckCustomModel = finalCheckCustomInput.value.trim();
+                }
+                
                 await browser.storage.local.set(currentSettings);
                 
                 statusSpan.textContent = '✓ Saved!';
@@ -396,7 +423,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 saveButtonInline.style.display = 'none';
                 
                 updateSaveButtonState();
-                showMessage('✓ API Key saved successfully!', true);
+                showMessage('✓ API Key and model settings saved successfully!', true);
             } catch (err) {
                 console.error('Failed to save inline Gemini key:', err);
                 statusSpan.textContent = '✗ Save failed';
@@ -506,7 +533,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             const geminiModelSelectElement = document.getElementById('gemini-model');
             const geminiCustomModelInputElement = document.getElementById('gemini-custom-model');
             
-            let modelToUse = 'gemini-2.5-flash';
+            let modelToUse = 'gemini-3.5-flash';
             if (geminiModelSelectElement) {
                 if (geminiModelSelectElement.value === 'custom' && geminiCustomModelInputElement && geminiCustomModelInputElement.value.trim()) {
                     modelToUse = geminiCustomModelInputElement.value.trim();
@@ -820,17 +847,46 @@ document.addEventListener('DOMContentLoaded', async function() {
             
             try {
                 const currentSettings = await browser.storage.local.get([
-                    'labels', 'apiKey', 'aiProvider', 'enableAi', 'enableLogging', 'geminiPaidPlan'
+                    'labels', 'apiKey', 'aiProvider', 'enableAi', 'enableLogging', 'geminiPaidPlan',
+                    'geminiModel', 'geminiCustomModel', 'geminiEnableFinalCheck',
+                    'geminiFinalCheckModel', 'geminiFinalCheckCustomModel'
                 ]);
                 
                 currentSettings.apiKey = apiKey;
                 currentSettings.aiProvider = provider;
+                currentSettings.enableAi = document.getElementById('enable-ai').checked;
+                currentSettings.enableLogging = document.getElementById('enable-logging').checked;
+                currentSettings.geminiPaidPlan = geminiPaidCheckbox.checked;
+                
+                // If it is Gemini, save all Gemini related fields as well
+                if (provider === 'gemini') {
+                    const geminiModelSelectElement = document.getElementById('gemini-model');
+                    if (geminiModelSelectElement) {
+                        currentSettings.geminiModel = geminiModelSelectElement.value;
+                    }
+                    const geminiCustomModelInputElement = document.getElementById('gemini-custom-model');
+                    if (geminiCustomModelInputElement) {
+                        currentSettings.geminiCustomModel = geminiCustomModelInputElement.value.trim();
+                    }
+                    const finalCheckCheckbox = document.getElementById('gemini-enable-final-check');
+                    if (finalCheckCheckbox) {
+                        currentSettings.geminiEnableFinalCheck = finalCheckCheckbox.checked;
+                    }
+                    const finalCheckModelSelect = document.getElementById('gemini-final-check-model');
+                    if (finalCheckModelSelect) {
+                        currentSettings.geminiFinalCheckModel = finalCheckModelSelect.value;
+                    }
+                    const finalCheckCustomInput = document.getElementById('gemini-final-check-custom-model');
+                    if (finalCheckCustomInput) {
+                        currentSettings.geminiFinalCheckCustomModel = finalCheckCustomInput.value.trim();
+                    }
+                }
                 
                 await browser.storage.local.set(currentSettings);
                 saveApiKeyInline.style.display = 'none';
                 showApiTestResult('✓ Saved successfully!', true);
                 updateSaveButtonState();
-                showMessage('✓ API Key saved successfully!', true);
+                showMessage('✓ API Key and settings saved successfully!', true);
             } catch (err) {
                 console.error('Failed to save inline API key:', err);
                 showApiTestResult('✗ Save failed', false);
@@ -862,7 +918,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 const geminiModelSelectElement = document.getElementById('gemini-model');
                 const geminiCustomModelInputElement = document.getElementById('gemini-custom-model');
                 
-                let modelToUse = 'gemini-2.5-flash';
+                let modelToUse = 'gemini-3.5-flash';
                 if (geminiModelSelectElement) {
                     if (geminiModelSelectElement.value === 'custom' && geminiCustomModelInputElement && geminiCustomModelInputElement.value.trim()) {
                         modelToUse = geminiCustomModelInputElement.value.trim();
@@ -1736,7 +1792,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                     throw new Error("No API Key found. Please add an API Key under API Key Configuration first.");
                 }
                 
-                let selectedModel = keyData.geminiModel || 'gemini-2.5-flash';
+                let selectedModel = keyData.geminiModel || 'gemini-3.5-flash';
                 if (selectedModel === 'custom' && keyData.geminiCustomModel) {
                     selectedModel = keyData.geminiCustomModel;
                 }

@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         
         let modelText = 'Unknown';
         if (provider === 'gemini') {
-            const geminiModel = result.geminiModel || 'gemini-2.5-flash';
+            const geminiModel = result.geminiModel || 'gemini-3.5-flash';
             let primaryName = geminiModel;
             if (geminiModel === 'custom') {
                 primaryName = result.geminiCustomModel || 'Custom';

@@ -497,7 +497,7 @@ async function analyzeEmailContent(emailContent) {
         let data;
 
         if (provider === 'gemini') {
-            const geminiModel = settings.geminiModel || 'gemini-2.5-flash';
+            const geminiModel = settings.geminiModel || 'gemini-3.5-flash';
             const geminiCustomModel = settings.geminiCustomModel || '';
             const modelToUse = (geminiModel === 'custom' && geminiCustomModel) ? geminiCustomModel : geminiModel;
             
@@ -1284,7 +1284,7 @@ async function triggerAISortingOnMessages(messages) {
         let activeModel = 'Unknown';
         
         if (provider === 'gemini') {
-            const geminiModel = settings.geminiModel || 'gemini-2.5-flash';
+            const geminiModel = settings.geminiModel || 'gemini-3.5-flash';
             let primaryName = geminiModel === 'custom' && settings.geminiCustomModel ? settings.geminiCustomModel : geminiModel;
             
             if (settings.geminiEnableFinalCheck === true) {
