@@ -134,15 +134,21 @@ document.addEventListener('DOMContentLoaded', async function() {
     // 5. Settings / Navigation Links
     openSettingsLink.addEventListener('click', (e) => {
         e.preventDefault();
-        browser.runtime.openOptionsPage();
+        try {
+            browser.tabs.create({ url: browser.runtime.getURL("options.html") });
+        } catch (err) {
+            browser.runtime.openOptionsPage();
+        }
         window.close(); // Close popup
     });
 
     viewHistoryLink.addEventListener('click', (e) => {
         e.preventDefault();
-        browser.runtime.openOptionsPage().then(() => {
-            // Options pages will handle scroll to history on load
-            window.close();
-        });
+        try {
+            browser.tabs.create({ url: browser.runtime.getURL("options.html#history-settings") });
+        } catch (err) {
+            browser.runtime.openOptionsPage();
+        }
+        window.close();
     });
 });

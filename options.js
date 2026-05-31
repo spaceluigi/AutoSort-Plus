@@ -1469,4 +1469,19 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Add event listeners for history controls
     document.getElementById('clear-history').addEventListener('click', clearHistory);
     document.getElementById('refresh-history').addEventListener('click', updateHistoryTable);
+
+    // Handle URL hash on load to auto-expand targeted collapsible sections (e.g., #history-settings)
+    if (window.location.hash) {
+        const hash = window.location.hash.substring(1);
+        const header = document.querySelector(`.section-header[data-section="${hash}"]`);
+        if (header) {
+            setTimeout(() => {
+                const section = header.parentElement;
+                if (section && section.classList.contains('collapsed')) {
+                    header.click();
+                }
+                header.scrollIntoView({ behavior: 'smooth' });
+            }, 150);
+        }
+    }
 }); 
