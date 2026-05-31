@@ -180,6 +180,63 @@
         </div>
 
         <div class="section collapsible-section">
+            <div class="section-header" data-section="ai-onboarding-settings">
+                <h2>📊 AI Onboarding & Mailbox Analysis</h2>
+                <span class="collapse-icon">▼</span>
+            </div>
+            <div class="section-content" id="ai-onboarding-settings">
+                <p class="info-text">Let AI do the heavy lifting. AutoSort+ can read your recent emails, extract key topics and senders, and build an interactive **Knowledge Graph** to propose an optimal sorting layout customized exactly for you.</p>
+                
+                <div class="onboarding-controls" style="margin-bottom: 20px; display: flex; align-items: center; gap: 15px;">
+                    <div class="input-group inline-group" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                        <label for="onboarding-sample-size" style="margin: 0; font-weight: 600;">Analyze last:</label>
+                        <select id="onboarding-sample-size" class="provider-select" style="width: auto; padding: 6px 12px; margin: 0;">
+                            <option value="20">20 emails (Fast)</option>
+                            <option value="30" selected>30 emails (Recommended)</option>
+                            <option value="50">50 emails (Deep Analysis)</option>
+                        </select>
+                    </div>
+                    <button id="btn-start-onboarding" class="button primary" style="margin: 0;">Generate Sorting Architecture</button>
+                </div>
+                
+                <div id="onboarding-loading-card" class="loading-card" style="display: none; padding: 25px; border-radius: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); text-align: center; margin-bottom: 20px;">
+                    <div class="spinner" style="width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.1); border-radius: 50%; border-top-color: #38bdf8; animation: spin 1s ease-in-out infinite; margin: 0 auto 15px auto;"></div>
+                    <div id="onboarding-loading-text" style="font-weight: 500; font-size: 1.05em; color: #e2e8f0; margin-bottom: 12px;">Connecting to mail servers...</div>
+                    <div class="progress-bar-container" style="width: 100%; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.06); overflow: hidden; margin-top: 10px;">
+                        <div id="onboarding-progress-bar" class="progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8); border-radius: 4px; transition: width 0.4s ease-out;"></div>
+                    </div>
+                </div>
+
+                <div id="onboarding-results-panel" class="onboarding-results" style="display: none; margin-top: 20px;">
+                    <h3 style="margin-top: 0; color: #38bdf8; font-size: 1.15em;">💡 Tailored Mailbox Knowledge Graph</h3>
+                    <p class="info-text">Below is the extracted relational graph displaying your top recurring subjects, key correspondents, and topic nodes.</p>
+                    
+                    <div class="graph-visualizer-card" style="padding: 20px; border-radius: 12px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.06); margin-bottom: 25px;">
+                        <div class="graph-legend" style="display: flex; gap: 15px; margin-bottom: 15px; font-size: 0.85em; opacity: 0.8;">
+                            <span class="legend-item" style="display: flex; align-items: center; gap: 5px;"><span class="legend-dot topic-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 6px #38bdf8; display: inline-block;"></span> Topic</span>
+                            <span class="legend-item" style="display: flex; align-items: center; gap: 5px;"><span class="legend-dot sender-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #c084fc; box-shadow: 0 0 6px #c084fc; display: inline-block;"></span> Sender</span>
+                            <span class="legend-item" style="display: flex; align-items: center; gap: 5px;"><span class="legend-dot relation-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #34d399; box-shadow: 0 0 6px #34d399; display: inline-block;"></span> Connection</span>
+                        </div>
+                        <div id="graph-nodes-container" class="graph-nodes-container" style="display: flex; flex-wrap: wrap; gap: 10px; min-height: 80px; justify-content: center; align-content: center;">
+                            <!-- Glowing nodes pills will be added here -->
+                        </div>
+                    </div>
+                    
+                    <h3 style="color: #38bdf8; font-size: 1.15em;">📁 Proposed Custom Category Layout</h3>
+                    <p class="info-text">The AI suggests the following custom categories matching your email patterns. Deselect any folders you do not wish to create.</p>
+                    
+                    <div id="proposed-architecture-list" class="proposed-architecture-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 25px;">
+                        <!-- Proposed layout list will be dynamically rendered here -->
+                    </div>
+                    
+                    <div class="onboarding-actions" style="display: flex; justify-content: flex-end;">
+                        <button id="btn-apply-architecture" class="button primary" style="margin: 0; padding: 10px 24px;">✓ Apply Suggested Architecture</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section collapsible-section">
             <div class="section-header" data-section="folders-settings">
                 <h2>📁 Custom Categories/Folders</h2>
                 <span class="collapse-icon">▼</span>

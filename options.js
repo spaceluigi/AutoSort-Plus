@@ -1463,6 +1463,328 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     }
 
+    // ==========================================
+    // AI MAILBOX ONBOARDING & KNOWLEDGE GRAPH
+    // ==========================================
+
+    const btnStartOnboarding = document.getElementById('btn-start-onboarding');
+    const btnApplyArchitecture = document.getElementById('btn-apply-architecture');
+    const onboardingSampleSize = document.getElementById('onboarding-sample-size');
+    const onboardingLoadingCard = document.getElementById('onboarding-loading-card');
+    const onboardingLoadingText = document.getElementById('onboarding-loading-text');
+    const onboardingProgressBar = document.getElementById('onboarding-progress-bar');
+    const onboardingResultsPanel = document.getElementById('onboarding-results-panel');
+    const graphNodesContainer = document.getElementById('graph-nodes-container');
+    const proposedArchitectureList = document.getElementById('proposed-architecture-list');
+
+    // Helper to recursively parse email body parts safely
+    function extractSnippetFromParts(parts) {
+        let text = "";
+        if (!parts) return text;
+        for (const part of parts) {
+            if (part.parts) {
+                text += extractSnippetFromParts(part.parts);
+            }
+            if (part.contentType === "text/plain" && part.body) {
+                text += part.body + "\n";
+            } else if (part.contentType === "text/html" && part.body && !text) {
+                text += part.body.replace(/<[^>]*>/g, ' ') + "\n";
+            }
+        }
+        return text;
+    }
+
+    // Helper to update onboarding progress display
+    function updateOnboardingProgress(percent, message) {
+        if (onboardingProgressBar) onboardingProgressBar.style.width = `${percent}%`;
+        if (onboardingLoadingText) onboardingLoadingText.textContent = message;
+        console.log(`[AutoSort+ Onboarding Progress] ${percent}% - ${message}`);
+    }
+
+    // Event listener to trigger AI Analysis and Knowledge Graph build
+    if (btnStartOnboarding) {
+        btnStartOnboarding.addEventListener('click', async () => {
+            btnStartOnboarding.disabled = true;
+            if (onboardingResultsPanel) onboardingResultsPanel.style.display = 'none';
+            if (onboardingLoadingCard) onboardingLoadingCard.style.display = 'block';
+            
+            try {
+                const sampleSize = parseInt(onboardingSampleSize.value, 10) || 30;
+                updateOnboardingProgress(10, "Connecting to mail servers...");
+                
+                // 1. Get email accounts
+                const accounts = await browser.accounts.list();
+                if (accounts.length === 0) {
+                    throw new Error("No active email accounts found in Thunderbird.");
+                }
+                
+                // 2. Recursively find active Inbox
+                let inboxFolder = null;
+                function findInbox(folderList) {
+                    for (const folder of folderList) {
+                        if (folder.type === 'inbox' || folder.name.toLowerCase() === 'inbox') {
+                            return folder;
+                        }
+                        if (folder.subFolders && folder.subFolders.length > 0) {
+                            const found = findInbox(folder.subFolders);
+                            if (found) return found;
+                        }
+                    }
+                    return null;
+                }
+                
+                for (const account of accounts) {
+                    inboxFolder = findInbox(account.folders);
+                    if (inboxFolder) break;
+                }
+                
+                if (!inboxFolder) {
+                    throw new Error("Could not automatically locate your primary Inbox folder.");
+                }
+                
+                updateOnboardingProgress(25, "Reading recent Inbox messages...");
+                
+                // 3. Fetch Inbox messages list
+                const messageList = await browser.messages.list(inboxFolder);
+                const rawMessages = messageList.messages || [];
+                if (rawMessages.length === 0) {
+                    throw new Error("Inbox is currently empty. Please make sure you have emails to analyze.");
+                }
+                
+                const messagesToAnalyze = rawMessages.slice(0, sampleSize);
+                const extractedEmails = [];
+                let count = 0;
+                
+                for (const msg of messagesToAnalyze) {
+                    count++;
+                    updateOnboardingProgress(
+                        25 + Math.floor((count / messagesToAnalyze.length) * 35),
+                        `Extracting message snippet ${count} of ${messagesToAnalyze.length}...`
+                    );
+                    
+                    const fullMessage = await browser.messages.getFull(msg.id);
+                    let bodyContent = "";
+                    if (fullMessage) {
+                        if (fullMessage.parts) {
+                            bodyContent = extractSnippetFromParts(fullMessage.parts);
+                        } else if (fullMessage.body) {
+                            bodyContent = fullMessage.body;
+                        }
+                    }
+                    
+                    extractedEmails.push({
+                        subject: msg.subject || "(No Subject)",
+                        author: msg.author || "Unknown Sender",
+                        snippet: bodyContent.substring(0, 150).replace(/\s+/g, ' ').trim()
+                    });
+                }
+                
+                updateOnboardingProgress(65, "Querying Google AI to build Knowledge Graph...");
+                
+                // 4. Retrieve model settings
+                const keyData = await browser.storage.local.get([
+                    'apiKey', 
+                    'geminiApiKeys', 
+                    'currentGeminiKeyIndex', 
+                    'geminiModel', 
+                    'geminiCustomModel'
+                ]);
+                
+                let activeApiKey = keyData.apiKey;
+                if (keyData.geminiApiKeys && keyData.geminiApiKeys.length > 0) {
+                    activeApiKey = keyData.geminiApiKeys[keyData.currentGeminiKeyIndex || 0];
+                }
+                
+                if (!activeApiKey) {
+                    throw new Error("No API Key found. Please add an API Key under API Key Configuration first.");
+                }
+                
+                let selectedModel = keyData.geminiModel || 'gemini-2.5-flash';
+                if (selectedModel === 'custom' && keyData.geminiCustomModel) {
+                    selectedModel = keyData.geminiCustomModel;
+                }
+                
+                updateOnboardingProgress(75, `Generating sorting structures via ${selectedModel}...`);
+                
+                // 5. Structure prompt
+                const promptPayload = `You are an expert AI email organization assistant. Your task is to analyze the following list of recent email subjects, senders, and snippets to build a mailbox relational Knowledge Graph and propose an optimal, tailored sorting category architecture.
+
+Here are the emails in JSON:
+${JSON.stringify(extractedEmails)}
+
+Instructions:
+1. Analyze common themes, recurring senders, and active projects/topics.
+2. Create a relational Knowledge Graph represented as nodes (types: "topic", "sender"). Propose at most 10-15 key nodes.
+3. Recommend 5 to 10 highly specific custom category/folder names customized specifically to this mailbox's context (e.g., 'Work/Projects', 'Finances/Invoices', 'Online Shopping', 'Newsletters', 'Personal', etc.).
+4. For each category, provide a clear 1-sentence rationale.
+
+You MUST respond with a single valid JSON object containing exactly the keys "knowledgeGraph" and "proposedArchitecture" matching this schema:
+{
+  "knowledgeGraph": {
+    "nodes": [
+      { "id": "node1", "label": "Sender or Topic Name", "type": "sender|topic|relation" }
+    ]
+  },
+  "proposedArchitecture": [
+    { "category": "Category/Folder Name", "rationale": "Why this category fits the email patterns." }
+  ]
+}
+
+CRITICAL: Your entire output must be parseable as a valid JSON object. Do not include markdown code block backticks (like \`\`\`json) or any preamble or explanation.`;
+
+                // 6. Make Generative Language fetch
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeApiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [{ text: promptPayload }]
+                        }],
+                        generationConfig: {
+                            responseMimeType: "application/json"
+                        }
+                    })
+                });
+                
+                const resData = await response.json();
+                if (!response.ok) {
+                    throw new Error(resData.error?.message || "Failed to contact Google Generative Language API");
+                }
+                
+                let rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!rawText) {
+                    throw new Error("AI returned an empty response.");
+                }
+                
+                // Strip markdown backticks if present
+                rawText = rawText.trim();
+                if (rawText.startsWith('```')) {
+                    rawText = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+                }
+                
+                const resultObj = JSON.parse(rawText);
+                updateOnboardingProgress(90, "Rendering visualizers...");
+                
+                // 7. Paint Visuals
+                renderOnboardingResults(resultObj);
+                
+                // Done!
+                if (onboardingLoadingCard) onboardingLoadingCard.style.display = 'none';
+                if (onboardingResultsPanel) onboardingResultsPanel.style.display = 'block';
+                showMessage("✓ Mailbox analysis and Knowledge Graph generated successfully!", true);
+                
+            } catch (err) {
+                console.error("Error during AI Onboarding:", err);
+                if (onboardingLoadingCard) onboardingLoadingCard.style.display = 'none';
+                showMessage(`Onboarding Error: ${err.message}`, false);
+            } finally {
+                btnStartOnboarding.disabled = false;
+            }
+        });
+    }
+
+    // Dynamic Nodes & Architecture Card Renderer
+    function renderOnboardingResults(data) {
+        if (!graphNodesContainer || !proposedArchitectureList) return;
+        
+        graphNodesContainer.textContent = '';
+        proposedArchitectureList.textContent = '';
+        
+        // 1. Render Knowledge Graph Nodes
+        const nodes = data.knowledgeGraph?.nodes || [];
+        if (nodes.length === 0) {
+            const placeholder = document.createElement('div');
+            placeholder.textContent = 'No relationship nodes extracted.';
+            placeholder.style.padding = '10px';
+            placeholder.style.color = '#64748b';
+            graphNodesContainer.appendChild(placeholder);
+        } else {
+            nodes.forEach(node => {
+                const nodePill = document.createElement('div');
+                nodePill.className = `graph-node type-${node.type || 'topic'}`;
+                nodePill.textContent = node.label;
+                graphNodesContainer.appendChild(nodePill);
+            });
+        }
+        
+        // 2. Render Proposed Folders
+        const suggestions = data.proposedArchitecture || [];
+        if (suggestions.length === 0) {
+            const placeholder = document.createElement('div');
+            placeholder.textContent = 'No custom category layouts proposed.';
+            placeholder.style.padding = '10px';
+            proposedArchitectureList.appendChild(placeholder);
+        } else {
+            suggestions.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'proposed-category-card';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `prop-cat-${index}`;
+                checkbox.checked = true;
+                checkbox.dataset.category = item.category;
+                
+                const details = document.createElement('div');
+                details.className = 'proposed-category-details';
+                
+                const name = document.createElement('div');
+                name.className = 'proposed-category-name';
+                name.textContent = item.category;
+                
+                const rationale = document.createElement('div');
+                rationale.className = 'proposed-category-rationale';
+                rationale.textContent = item.rationale;
+                
+                details.appendChild(name);
+                details.appendChild(rationale);
+                
+                card.appendChild(checkbox);
+                card.appendChild(details);
+                
+                proposedArchitectureList.appendChild(card);
+            });
+        }
+    }
+
+    // Bind Apply Architecture action
+    if (btnApplyArchitecture) {
+        btnApplyArchitecture.addEventListener('click', () => {
+            const checkboxes = document.querySelectorAll('#proposed-architecture-list input[type="checkbox"]:checked');
+            const checkedCategories = Array.from(checkboxes).map(cb => cb.dataset.category);
+            
+            if (checkedCategories.length === 0) {
+                showMessage("Please select at least one category layout to import.", false);
+                return;
+            }
+            
+            // Clear default/empty labels container before bulk adding if needed
+            const emptyInstruction = document.querySelector('#labels-container .instruction-message');
+            if (emptyInstruction) {
+                labelsContainer.textContent = '';
+            }
+            
+            // Add the dynamic category boxes
+            checkedCategories.forEach(cat => {
+                addLabelInput(cat);
+            });
+            
+            showMessage(`✓ Successfully imported ${checkedCategories.length} categories! Click 'Save Settings' at the bottom to write.`, true);
+            
+            // Auto expand the folder configuration panel and scroll down to show imports
+            const foldersHeader = document.querySelector('.section-header[data-section="folders-settings"]');
+            if (foldersHeader) {
+                const parentSection = foldersHeader.parentElement;
+                if (parentSection && parentSection.classList.contains('collapsed')) {
+                    foldersHeader.click();
+                }
+                setTimeout(() => {
+                    foldersHeader.scrollIntoView({ behavior: 'smooth' });
+                }, 100);
+            }
+        });
+    }
+
     // Initialize the page
     await updateHistoryTable();
 
