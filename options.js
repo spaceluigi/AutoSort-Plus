@@ -1510,6 +1510,9 @@ document.addEventListener('DOMContentLoaded', async function() {
             
             try {
                 const sampleSize = parseInt(onboardingSampleSize.value, 10) || 30;
+                const blendCurrent = document.getElementById('onboarding-blend-current')?.checked !== false;
+                const prioritizeToss = document.getElementById('onboarding-prioritize-toss')?.checked !== false;
+                
                 updateOnboardingProgress(10, "Connecting to mail servers...");
                 
                 // 1. Get email accounts
@@ -1555,28 +1558,45 @@ document.addEventListener('DOMContentLoaded', async function() {
                 const extractedEmails = [];
                 let count = 0;
                 
+                // Hybrid approach: extract snippets asynchronously for first 20; headers only for the rest
                 for (const msg of messagesToAnalyze) {
                     count++;
-                    updateOnboardingProgress(
-                        25 + Math.floor((count / messagesToAnalyze.length) * 35),
-                        `Extracting message snippet ${count} of ${messagesToAnalyze.length}...`
-                    );
                     
-                    const fullMessage = await browser.messages.getFull(msg.id);
-                    let bodyContent = "";
-                    if (fullMessage) {
-                        if (fullMessage.parts) {
-                            bodyContent = extractSnippetFromParts(fullMessage.parts);
-                        } else if (fullMessage.body) {
-                            bodyContent = fullMessage.body;
+                    if (count <= 20) {
+                        updateOnboardingProgress(
+                            25 + Math.floor((count / Math.min(messagesToAnalyze.length, 20)) * 25),
+                            `Extracting email snippet ${count} of ${Math.min(messagesToAnalyze.length, 20)}...`
+                        );
+                        
+                        const fullMessage = await browser.messages.getFull(msg.id);
+                        let bodyContent = "";
+                        if (fullMessage) {
+                            if (fullMessage.parts) {
+                                bodyContent = extractSnippetFromParts(fullMessage.parts);
+                            } else if (fullMessage.body) {
+                                bodyContent = fullMessage.body;
+                            }
                         }
+                        
+                        extractedEmails.push({
+                            subject: msg.subject || "(No Subject)",
+                            author: msg.author || "Unknown Sender",
+                            snippet: bodyContent.substring(0, 150).replace(/\s+/g, ' ').trim()
+                        });
+                    } else {
+                        // Headers only bulk ingestion (extremely fast)
+                        if (count % 100 === 0 || count === messagesToAnalyze.length) {
+                            updateOnboardingProgress(
+                                50 + Math.floor((count / messagesToAnalyze.length) * 10),
+                                `Ingesting email headers ${count} of ${messagesToAnalyze.length}...`
+                            );
+                        }
+                        
+                        extractedEmails.push({
+                            subject: msg.subject || "(No Subject)",
+                            author: msg.author || "Unknown Sender"
+                        });
                     }
-                    
-                    extractedEmails.push({
-                        subject: msg.subject || "(No Subject)",
-                        author: msg.author || "Unknown Sender",
-                        snippet: bodyContent.substring(0, 150).replace(/\s+/g, ' ').trim()
-                    });
                 }
                 
                 updateOnboardingProgress(65, "Querying Google AI to build Knowledge Graph...");
@@ -1606,7 +1626,33 @@ document.addEventListener('DOMContentLoaded', async function() {
                 
                 updateOnboardingProgress(75, `Generating sorting structures via ${selectedModel}...`);
                 
-                // 5. Structure prompt
+                // 5. Blending existing folders list
+                let currentCategories = [];
+                const labelInputs = document.querySelectorAll('.label-input');
+                labelInputs.forEach(input => {
+                    const val = input.value.trim();
+                    if (val) currentCategories.push(val);
+                });
+                
+                let currentFoldersDirective = "";
+                if (blendCurrent && currentCategories.length > 0) {
+                    currentFoldersDirective = `
+5. Blending existing folders: The user already has the following custom folders/categories defined:
+${JSON.stringify(currentCategories)}
+Your recommended proposedArchitecture MUST incorporate, blend, and build upon these existing folders. Suggest additions, mergers, or optimizations where it would work best, while preserving their core folders.`;
+                }
+
+                // 6. Clutter identification directive
+                let clutterDirective = "";
+                if (prioritizeToss) {
+                    clutterDirective = `
+6. Clutter & Toss identification: The user wants to easily identify low-value emails they can toss (e.g. notifications, marketing lists, obsolete newsletters, spam).
+* Actively search for senders or subject clusters representing clutter.
+* Propose a specific category layout (e.g., 'Toss / Low Priority' or 'Newsletters & Promotions') specifically tailored to house these clutter emails.
+* For each correspondent or subject cluster representing clutter, label their nodes in the Knowledge Graph with a type of "toss" so the UI can highlight them in red.`;
+                }
+                
+                // 7. Structure prompt
                 const promptPayload = `You are an expert AI email organization assistant. Your task is to analyze the following list of recent email subjects, senders, and snippets to build a mailbox relational Knowledge Graph and propose an optimal, tailored sorting category architecture.
 
 Here are the emails in JSON:
@@ -1614,15 +1660,17 @@ ${JSON.stringify(extractedEmails)}
 
 Instructions:
 1. Analyze common themes, recurring senders, and active projects/topics.
-2. Create a relational Knowledge Graph represented as nodes (types: "topic", "sender"). Propose at most 10-15 key nodes.
+2. Create a relational Knowledge Graph represented as nodes (types: "topic", "sender", "toss"). Propose at most 12-18 key nodes.
 3. Recommend 5 to 10 highly specific custom category/folder names customized specifically to this mailbox's context (e.g., 'Work/Projects', 'Finances/Invoices', 'Online Shopping', 'Newsletters', 'Personal', etc.).
 4. For each category, provide a clear 1-sentence rationale.
+${currentFoldersDirective}
+${clutterDirective}
 
 You MUST respond with a single valid JSON object containing exactly the keys "knowledgeGraph" and "proposedArchitecture" matching this schema:
 {
   "knowledgeGraph": {
     "nodes": [
-      { "id": "node1", "label": "Sender or Topic Name", "type": "sender|topic|relation" }
+      { "id": "node1", "label": "Sender or Topic Name", "type": "sender|topic|toss" }
     ]
   },
   "proposedArchitecture": [
@@ -1632,7 +1680,7 @@ You MUST respond with a single valid JSON object containing exactly the keys "kn
 
 CRITICAL: Your entire output must be parseable as a valid JSON object. Do not include markdown code block backticks (like \`\`\`json) or any preamble or explanation.`;
 
-                // 6. Make Generative Language fetch
+                // 8. Make Generative Language fetch
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeApiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1665,7 +1713,7 @@ CRITICAL: Your entire output must be parseable as a valid JSON object. Do not in
                 const resultObj = JSON.parse(rawText);
                 updateOnboardingProgress(90, "Rendering visualizers...");
                 
-                // 7. Paint Visuals
+                // 9. Paint Visuals
                 renderOnboardingResults(resultObj);
                 
                 // Done!
@@ -1702,7 +1750,14 @@ CRITICAL: Your entire output must be parseable as a valid JSON object. Do not in
             nodes.forEach(node => {
                 const nodePill = document.createElement('div');
                 nodePill.className = `graph-node type-${node.type || 'topic'}`;
-                nodePill.textContent = node.label;
+                
+                // Add Trash icon for Toss nodes
+                if (node.type === 'toss') {
+                    nodePill.textContent = `🗑️ ${node.label}`;
+                } else {
+                    nodePill.textContent = node.label;
+                }
+                
                 graphNodesContainer.appendChild(nodePill);
             });
         }
