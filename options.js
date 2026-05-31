@@ -398,6 +398,46 @@ document.addEventListener('DOMContentLoaded', async function() {
         input.placeholder = 'Enter Gemini API key from another project';
         input.value = value;
         input.dataset.index = index;
+        
+        const saveButtonInline = document.createElement('button');
+        saveButtonInline.className = 'button inline-save-btn';
+        saveButtonInline.textContent = 'Save';
+        saveButtonInline.style.backgroundColor = '#10b981';
+        saveButtonInline.style.color = '#fff';
+        saveButtonInline.style.display = 'none';
+        saveButtonInline.addEventListener('click', async () => {
+            const keyValue = input.value.trim();
+            if (!keyValue) return;
+            
+            try {
+                const currentSettings = await browser.storage.local.get([
+                    'labels', 'geminiApiKeys', 'currentGeminiKeyIndex', 
+                    'aiProvider', 'enableAi', 'enableLogging', 'geminiPaidPlan',
+                    'geminiModel', 'geminiCustomModel', 'geminiEnableFinalCheck',
+                    'geminiFinalCheckModel', 'geminiFinalCheckCustomModel'
+                ]);
+                
+                geminiKeys[index] = keyValue;
+                const validGeminiKeys = geminiKeys.filter(k => k && k.trim() !== '');
+                
+                currentSettings.geminiApiKeys = validGeminiKeys;
+                currentSettings.currentGeminiKeyIndex = 0;
+                
+                await browser.storage.local.set(currentSettings);
+                
+                statusSpan.textContent = '✓ Saved!';
+                statusSpan.className = 'key-test-result success';
+                saveButtonInline.style.display = 'none';
+                
+                updateSaveButtonState();
+                showMessage('✓ API Key saved successfully!', true);
+            } catch (err) {
+                console.error('Failed to save inline Gemini key:', err);
+                statusSpan.textContent = '✗ Save failed';
+                statusSpan.className = 'key-test-result error';
+            }
+        });
+
         input.addEventListener('input', (e) => {
             const newKey = e.target.value.trim();
             geminiKeys[index] = newKey;
@@ -416,6 +456,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 input.style.borderColor = '';
                 input.title = '';
             }
+            saveButtonInline.style.display = 'none';
             updateSaveButtonState();
         });
         
@@ -454,6 +495,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         keyItem.appendChild(keyIndex);
         keyItem.appendChild(input);
         keyItem.appendChild(testButton);
+        keyItem.appendChild(saveButtonInline);
         keyItem.appendChild(removeButton);
         keyItem.appendChild(statusSpan);
         geminiKeysList.appendChild(keyItem);
@@ -521,24 +563,33 @@ document.addEventListener('DOMContentLoaded', async function() {
             if (response.ok) {
                 statusSpan.textContent = '✓ Valid';
                 statusSpan.className = 'key-test-result success';
-            } else if (response.status === 429) {
-                statusSpan.textContent = '⚠️ Limit reached';
-                statusSpan.className = 'key-test-result error';
-                statusSpan.title = 'This key has reached its daily rate limit (20/day). Will reset in ~24 hours.';
-                console.error('Key #%d has reached rate limit (429)', index + 1);
-            } else if (response.status === 401 || response.status === 403) {
-                statusSpan.textContent = '✗ Invalid key';
-                statusSpan.className = 'key-test-result error';
-                statusSpan.title = 'API key is invalid or expired. Check your key in Google AI Studio.';
-                console.error('Key #%d test failed: %s', index + 1, response.status);
+                const saveBtn = keyItemElement.querySelector('.inline-save-btn');
+                if (saveBtn) saveBtn.style.display = 'inline-block';
             } else {
-                statusSpan.textContent = `✗ Failed (${response.status})`;
-                statusSpan.className = 'key-test-result error';
-                console.error('Key #%d test failed:', index + 1, response.status);
+                const saveBtn = keyItemElement.querySelector('.inline-save-btn');
+                if (saveBtn) saveBtn.style.display = 'none';
+                
+                if (response.status === 429) {
+                    statusSpan.textContent = '⚠️ Limit reached';
+                    statusSpan.className = 'key-test-result error';
+                    statusSpan.title = 'This key has reached its daily rate limit (20/day). Will reset in ~24 hours.';
+                    console.error('Key #%d has reached rate limit (429)', index + 1);
+                } else if (response.status === 401 || response.status === 403) {
+                    statusSpan.textContent = '✗ Invalid key';
+                    statusSpan.className = 'key-test-result error';
+                    statusSpan.title = 'API key is invalid or expired. Check your key in Google AI Studio.';
+                    console.error('Key #%d test failed: %s', index + 1, response.status);
+                } else {
+                    statusSpan.textContent = `✗ Failed (${response.status})`;
+                    statusSpan.className = 'key-test-result error';
+                    console.error('Key #%d test failed:', index + 1, response.status);
+                }
             }
         } catch (error) {
             statusSpan.textContent = `✗ Error`;
             statusSpan.className = 'key-test-result error';
+            const saveBtn = keyItemElement.querySelector('.inline-save-btn');
+            if (saveBtn) saveBtn.style.display = 'none';
             console.error('Key #%d test error:', index + 1, error);
         }
     }
@@ -771,8 +822,40 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
     
     // Add input listeners for validation
-    apiKeyInput.addEventListener('input', updateSaveButtonState);
+    apiKeyInput.addEventListener('input', () => {
+        const saveApiKeyInline = document.getElementById('save-api-key-inline');
+        if (saveApiKeyInline) saveApiKeyInline.style.display = 'none';
+        updateSaveButtonState();
+    });
     labelsContainer.addEventListener('input', updateSaveButtonState);
+
+    // Save single API key inline
+    const saveApiKeyInline = document.getElementById('save-api-key-inline');
+    if (saveApiKeyInline) {
+        saveApiKeyInline.addEventListener('click', async () => {
+            const apiKey = apiKeyInput.value.trim();
+            const provider = aiProviderSelect.value;
+            if (!apiKey) return;
+            
+            try {
+                const currentSettings = await browser.storage.local.get([
+                    'labels', 'apiKey', 'aiProvider', 'enableAi', 'enableLogging', 'geminiPaidPlan'
+                ]);
+                
+                currentSettings.apiKey = apiKey;
+                currentSettings.aiProvider = provider;
+                
+                await browser.storage.local.set(currentSettings);
+                saveApiKeyInline.style.display = 'none';
+                showApiTestResult('✓ Saved successfully!', true);
+                updateSaveButtonState();
+                showMessage('✓ API Key saved successfully!', true);
+            } catch (err) {
+                console.error('Failed to save inline API key:', err);
+                showApiTestResult('✗ Save failed', false);
+            }
+        });
+    }
 
     // Test API connection
     testApiButton.addEventListener('click', async () => {
@@ -875,11 +958,17 @@ document.addEventListener('DOMContentLoaded', async function() {
 
             if (response.ok) {
                 showApiTestResult('✓ API connection successful!', true);
+                const saveApiKeyInline = document.getElementById('save-api-key-inline');
+                if (saveApiKeyInline) saveApiKeyInline.style.display = 'inline-block';
             } else {
+                const saveApiKeyInline = document.getElementById('save-api-key-inline');
+                if (saveApiKeyInline) saveApiKeyInline.style.display = 'none';
                 const error = await response.json();
                 showApiTestResult(`API Error: ${error.error?.message || error.message || 'Unknown error'}`, false);
             }
         } catch (error) {
+            const saveApiKeyInline = document.getElementById('save-api-key-inline');
+            if (saveApiKeyInline) saveApiKeyInline.style.display = 'none';
             showApiTestResult(`Connection Error: ${error.message}`, false);
         }
     });
