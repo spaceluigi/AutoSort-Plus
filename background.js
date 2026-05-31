@@ -179,14 +179,14 @@ async function callOllamaViaTab(ollamaUrl, payload) {
 }
 
 // Gemini rate limiting functions (free tier: 5/min, 20/day per key)
+// Gemini rate limiting functions using dynamic cool-down timers
 async function checkGeminiRateLimit() {
     const now = Date.now();
     const data = await browser.storage.local.get([
         'geminiApiKeys', 
         'geminiRateLimits', 
         'currentGeminiKeyIndex', 
-        'geminiPaidPlan',
-        'geminiRateLimit' // Legacy single-key support
+        'geminiPaidPlan'
     ]);
     
     // Handle paid plan - no limits
@@ -198,49 +198,20 @@ async function checkGeminiRateLimit() {
     if (data.geminiApiKeys && data.geminiApiKeys.length > 0) {
         const keys = data.geminiApiKeys;
         const rateLimits = data.geminiRateLimits || keys.map(() => ({
-            requests: [],
-            dailyCount: 0,
-            dailyResetTime: now + (24 * 60 * 60 * 1000)
+            coolDownUntil: 0,
+            invalid: false
         }));
+        
         let currentIndex = data.currentGeminiKeyIndex || 0;
+        if (currentIndex >= keys.length) currentIndex = 0;
         
-        // Try to find an available key
-        const startIndex = currentIndex;
         let attempts = 0;
-        
         while (attempts < keys.length) {
-            const rateLimit = rateLimits[currentIndex];
+            const rateLimit = rateLimits[currentIndex] || { coolDownUntil: 0, invalid: false };
             
-            // Reset daily count if it's a new day
-            if (now > rateLimit.dailyResetTime) {
-                rateLimit.dailyCount = 0;
-                rateLimit.dailyResetTime = now + (24 * 60 * 60 * 1000);
-                rateLimit.requests = [];
-            }
-            
-            // Remove requests older than 1 minute
-            const oneMinuteAgo = now - 60000;
-            rateLimit.requests = rateLimit.requests.filter(time => time > oneMinuteAgo);
-            
-            // Check if this key is available
-            if (rateLimit.dailyCount < 20) {
-                // Check if we need to wait
-                if (rateLimit.requests.length > 0) {
-                    const lastRequest = Math.max(...rateLimit.requests);
-                    const timeSinceLastRequest = now - lastRequest;
-                    const minInterval = 12000; // 12 seconds
-                    
-                    if (timeSinceLastRequest < minInterval) {
-                        const waitTime = Math.ceil((minInterval - timeSinceLastRequest) / 1000);
-                        return {
-                            allowed: true,
-                            waitTime: waitTime,
-                            keyIndex: currentIndex
-                        };
-                    }
-                }
-                
-                // This key is ready to use
+            // Check if key is valid and not cooling down
+            if (!rateLimit.invalid && (!rateLimit.coolDownUntil || now >= rateLimit.coolDownUntil)) {
+                // Found an active, ready key!
                 await browser.storage.local.set({ 
                     currentGeminiKeyIndex: currentIndex,
                     geminiRateLimits: rateLimits
@@ -253,55 +224,43 @@ async function checkGeminiRateLimit() {
                 };
             }
             
-            // This key has reached its limit, try next one
+            // Try next key
             currentIndex = (currentIndex + 1) % keys.length;
             attempts++;
         }
         
-        // All keys have reached their limits
-        return {
-            allowed: false,
-            message: `All ${keys.length} Gemini API keys have reached their daily limit (20/day each). Please wait for reset or add more API keys in settings.`
-        };
-    }
-    
-    // Legacy single-key mode (backward compatibility)
-    const rateLimit = data.geminiRateLimit || { requests: [], dailyCount: 0, dailyResetTime: now };
-    
-    // Reset daily count if it's a new day
-    if (now > rateLimit.dailyResetTime) {
-        rateLimit.dailyCount = 0;
-        rateLimit.dailyResetTime = now + (24 * 60 * 60 * 1000);
-    }
-    
-    // Check daily limit (20 per day)
-    if (rateLimit.dailyCount >= 20) {
-        const hoursUntilReset = Math.ceil((rateLimit.dailyResetTime - now) / (1000 * 60 * 60));
-        return {
-            allowed: false,
-            message: `Gemini free tier daily limit reached (20/day). Resets in ${hoursUntilReset} hours. Upgrade to paid plan or add multiple API keys in settings to remove limits.`
-        };
-    }
-    
-    // Remove requests older than 1 minute
-    const oneMinuteAgo = now - 60000;
-    rateLimit.requests = rateLimit.requests.filter(time => time > oneMinuteAgo);
-    
-    // Check if we need to wait (12 seconds between requests = 5 per minute)
-    if (rateLimit.requests.length > 0) {
-        const lastRequest = Math.max(...rateLimit.requests);
-        const timeSinceLastRequest = now - lastRequest;
-        const minInterval = 12000; // 12 seconds
+        // All keys are either invalid or cooling down.
+        // Find the one that finishes cooling down first.
+        let minWaitTime = Infinity;
+        let bestKeyIndex = null;
         
-        if (timeSinceLastRequest < minInterval) {
-            const waitTime = Math.ceil((minInterval - timeSinceLastRequest) / 1000);
+        for (let i = 0; i < keys.length; i++) {
+            const rl = rateLimits[i] || { coolDownUntil: 0, invalid: false };
+            if (!rl.invalid && rl.coolDownUntil > now) {
+                const wait = rl.coolDownUntil - now;
+                if (wait < minWaitTime) {
+                    minWaitTime = wait;
+                    bestKeyIndex = i;
+                }
+            }
+        }
+        
+        if (bestKeyIndex !== null && minWaitTime !== Infinity) {
+            const waitSeconds = Math.ceil(minWaitTime / 1000);
             return {
-                allowed: true,
-                waitTime: waitTime
+                allowed: true, // We allow the execution but instruct wait
+                waitTime: waitSeconds,
+                keyIndex: bestKeyIndex
             };
         }
+        
+        return {
+            allowed: false,
+            message: "All configured Gemini API keys are currently invalid or rate-limited. Please update your keys in settings."
+        };
     }
     
+    // Fallback single-key mode (legacy)
     return {
         allowed: true,
         waitTime: 0
@@ -309,51 +268,7 @@ async function checkGeminiRateLimit() {
 }
 
 async function trackGeminiRequest(keyIndex = null) {
-    const now = Date.now();
-    const data = await browser.storage.local.get([
-        'geminiApiKeys',
-        'geminiRateLimits',
-        'currentGeminiKeyIndex',
-        'geminiRateLimit' // Legacy
-    ]);
-    
-    // Multi-key mode
-    if (data.geminiApiKeys && data.geminiApiKeys.length > 0 && keyIndex !== null) {
-        const rateLimits = data.geminiRateLimits || data.geminiApiKeys.map(() => ({
-            requests: [],
-            dailyCount: 0,
-            dailyResetTime: now + (24 * 60 * 60 * 1000)
-        }));
-        
-        const rateLimit = rateLimits[keyIndex];
-        
-        // Add current request
-        rateLimit.requests.push(now);
-        rateLimit.dailyCount += 1;
-        
-        // Clean old requests
-        const oneMinuteAgo = now - 60000;
-        rateLimit.requests = rateLimit.requests.filter(time => time > oneMinuteAgo);
-        
-        await browser.storage.local.set({ geminiRateLimits: rateLimits });
-        
-        console.log(`Gemini Key #${keyIndex + 1}: ${rateLimit.dailyCount}/20 today, ${rateLimit.requests.length} in last minute`);
-    } else {
-        // Legacy single-key mode
-        const rateLimit = data.geminiRateLimit || { requests: [], dailyCount: 0, dailyResetTime: now + (24 * 60 * 60 * 1000) };
-        
-        // Add current request
-        rateLimit.requests.push(now);
-        rateLimit.dailyCount += 1;
-        
-        // Clean old requests
-        const oneMinuteAgo = now - 60000;
-        rateLimit.requests = rateLimit.requests.filter(time => time > oneMinuteAgo);
-        
-        await browser.storage.local.set({ geminiRateLimit: rateLimit });
-        
-        await debugLog(`Gemini requests: ${rateLimit.dailyCount}/20 today, ${rateLimit.requests.length} in last minute`);
-    }
+    // Deprecated: No longer manually tracking count, we use dynamic 429 cool-down timers.
 }
 
 // Dynamically update rate limit statistics based on HTTP response headers
@@ -796,6 +711,37 @@ async function analyzeEmailContent(emailContent) {
             }
 
             if (!response.ok) {
+                if (provider === 'gemini' && keyIndexToUse !== null) {
+                    const now = Date.now();
+                    if (response.status === 429) {
+                        const coolDownMinutes = 30;
+                        const data = await browser.storage.local.get(['geminiRateLimits', 'geminiApiKeys']);
+                        if (data.geminiApiKeys) {
+                            const rateLimits = data.geminiRateLimits || data.geminiApiKeys.map(() => ({ coolDownUntil: 0, invalid: false }));
+                            if (rateLimits[keyIndexToUse]) {
+                                rateLimits[keyIndexToUse].coolDownUntil = now + (coolDownMinutes * 60 * 1000);
+                                await browser.storage.local.set({ geminiRateLimits: rateLimits });
+                                await debugLog(`API key #${keyIndexToUse + 1} rate limited. Set cool-down for 30 minutes.`);
+                            }
+                        }
+                        const keysData = await browser.storage.local.get(['geminiApiKeys', 'currentGeminiKeyIndex']);
+                        if (keysData.geminiApiKeys && keysData.geminiApiKeys.length > 1) {
+                            const nextIndex = (keyIndexToUse + 1) % keysData.geminiApiKeys.length;
+                            await browser.storage.local.set({ currentGeminiKeyIndex: nextIndex });
+                        }
+                    } else if (response.status === 401 || response.status === 403) {
+                        const data = await browser.storage.local.get(['geminiRateLimits', 'geminiApiKeys']);
+                        if (data.geminiApiKeys) {
+                            const rateLimits = data.geminiRateLimits || data.geminiApiKeys.map(() => ({ coolDownUntil: 0, invalid: false }));
+                            if (rateLimits[keyIndexToUse]) {
+                                rateLimits[keyIndexToUse].invalid = true;
+                                await browser.storage.local.set({ geminiRateLimits: rateLimits });
+                                await debugLog(`API key #${keyIndexToUse + 1} marked as invalid.`);
+                            }
+                        }
+                    }
+                }
+
                 let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                 
                 // Try to parse error response body
@@ -816,7 +762,7 @@ async function analyzeEmailContent(emailContent) {
                 
                 // Handle quota errors specifically
                 if (response.status === 429 || errorMessage.includes('quota') || errorMessage.includes('rate limit')) {
-                    errorMessage = "API quota exceeded. Please wait a while before trying again, or upgrade to a paid API key.";
+                    errorMessage = "API key rate-limited. AutoSort+ rotated keys. Please try again or add more Gemini keys.";
                 }
                 
                 // Handle Ollama auth errors
@@ -986,7 +932,7 @@ async function storeMoveHistory(result) {
 }
 
 // Function to apply labels to selected messages
-async function applyLabelsToMessages(messages, label) {
+async function applyLabelsToMessages(messages, label, activeModel = 'AI') {
     try {
         const messageCount = messages.length;
         const notificationId = await showNotification(
@@ -1106,6 +1052,7 @@ async function applyLabelsToMessages(messages, label) {
                         subject: message.subject || "(No subject)",
                         status: "Error",
                         destination: "Folder not found",
+                        model: activeModel,
                         timestamp: new Date().toISOString()
                     };
                     moveResults.push(result);
@@ -1130,6 +1077,7 @@ async function applyLabelsToMessages(messages, label) {
                     subject: message.subject || "(No subject)",
                     status: "Success",
                     destination: targetFolder.name,
+                    model: activeModel,
                     timestamp: new Date().toISOString()
                 };
                 moveResults.push(result);
@@ -1141,6 +1089,7 @@ async function applyLabelsToMessages(messages, label) {
                     subject: message.subject || "(No subject)",
                     status: "Error",
                     destination: moveError.message,
+                    model: activeModel,
                     timestamp: new Date().toISOString()
                 };
                 moveResults.push(result);
@@ -1323,8 +1272,34 @@ async function triggerAISortingOnMessages(messages) {
             'geminiFinalCheckCustomModel',
             'apiKey',
             'geminiApiKeys',
-            'currentGeminiKeyIndex'
+            'currentGeminiKeyIndex',
+            'aiProvider',
+            'geminiModel',
+            'geminiCustomModel',
+            'ollamaModel',
+            'ollamaCustomModel'
         ]);
+
+        const provider = settings.aiProvider || 'gemini';
+        let activeModel = 'Unknown';
+        
+        if (provider === 'gemini') {
+            const geminiModel = settings.geminiModel || 'gemini-2.5-flash';
+            let primaryName = geminiModel === 'custom' && settings.geminiCustomModel ? settings.geminiCustomModel : geminiModel;
+            
+            if (settings.geminiEnableFinalCheck === true) {
+                const finalModel = settings.geminiFinalCheckModel || 'gemini-3.5-flash';
+                let finalName = finalModel === 'custom' && settings.geminiFinalCheckCustomModel ? settings.geminiFinalCheckCustomModel : finalModel;
+                activeModel = `Gemini (${primaryName} + ${finalName})`;
+            } else {
+                activeModel = `Gemini (${primaryName})`;
+            }
+        } else if (provider === 'ollama') {
+            const oModel = settings.ollamaModel || 'llama3.2';
+            activeModel = oModel === 'custom' && settings.ollamaCustomModel ? `Ollama (${settings.ollamaCustomModel})` : `Ollama (${oModel})`;
+        } else {
+            activeModel = provider.charAt(0).toUpperCase() + provider.slice(1);
+        }
 
         for (const message of messages) {
             processedCount++;
@@ -1416,7 +1391,7 @@ async function triggerAISortingOnMessages(messages) {
 
             await debugLog(`Applying label: ${label}`);
             appStatus.message = `Moving email ${processedCount} of ${messages.length} to "${label}"...`;
-            await applyLabelsToMessages([message], label);
+            await applyLabelsToMessages([message], label, activeModel);
             successfullyLabeledCount++;
         }
 
@@ -1608,6 +1583,36 @@ ${emailContent}`;
         }
 
         if (!response.ok) {
+            const keyIndex = settings.currentGeminiKeyIndex || 0;
+            const now = Date.now();
+            if (response.status === 429) {
+                const coolDownMinutes = 30;
+                const data = await browser.storage.local.get(['geminiRateLimits', 'geminiApiKeys']);
+                if (data.geminiApiKeys) {
+                    const rateLimits = data.geminiRateLimits || data.geminiApiKeys.map(() => ({ coolDownUntil: 0, invalid: false }));
+                    if (rateLimits[keyIndex]) {
+                        rateLimits[keyIndex].coolDownUntil = now + (coolDownMinutes * 60 * 1000);
+                        await browser.storage.local.set({ geminiRateLimits: rateLimits });
+                        await debugLog(`Supervisor API key #${keyIndex + 1} rate limited. Set cool-down for 30 minutes.`);
+                    }
+                }
+                const keysData = await browser.storage.local.get(['geminiApiKeys', 'currentGeminiKeyIndex']);
+                if (keysData.geminiApiKeys && keysData.geminiApiKeys.length > 1) {
+                    const nextIndex = (keyIndex + 1) % keysData.geminiApiKeys.length;
+                    await browser.storage.local.set({ currentGeminiKeyIndex: nextIndex });
+                }
+            } else if (response.status === 401 || response.status === 403) {
+                const data = await browser.storage.local.get(['geminiRateLimits', 'geminiApiKeys']);
+                if (data.geminiApiKeys) {
+                    const rateLimits = data.geminiRateLimits || data.geminiApiKeys.map(() => ({ coolDownUntil: 0, invalid: false }));
+                    if (rateLimits[keyIndex]) {
+                        rateLimits[keyIndex].invalid = true;
+                        await browser.storage.local.set({ geminiRateLimits: rateLimits });
+                        await debugLog(`Supervisor API key #${keyIndex + 1} marked as invalid.`);
+                    }
+                }
+            }
+
             const errText = await response.text();
             throw new Error(`HTTP ${response.status}: ${errText}`);
         }

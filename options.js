@@ -220,53 +220,34 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Update single key usage display (backward compatibility)
     async function updateSingleKeyUsageDisplay(rateLimit) {
         const now = Date.now();
-        
-        // Update daily count
-        document.getElementById('gemini-daily-count').textContent = rateLimit.dailyCount;
-        
-        // Update last request time
-        if (rateLimit.requests && rateLimit.requests.length > 0) {
-            const lastRequest = Math.max(...rateLimit.requests);
-            const minutesAgo = Math.floor((now - lastRequest) / 60000);
-            if (minutesAgo < 1) {
-                document.getElementById('gemini-last-request').textContent = 'Just now';
-            } else if (minutesAgo < 60) {
-                document.getElementById('gemini-last-request').textContent = `${minutesAgo} minute${minutesAgo > 1 ? 's' : ''} ago`;
-            } else {
-                const hoursAgo = Math.floor(minutesAgo / 60);
-                document.getElementById('gemini-last-request').textContent = `${hoursAgo} hour${hoursAgo > 1 ? 's' : ''} ago`;
-            }
-        } else {
-            document.getElementById('gemini-last-request').textContent = 'Never';
-        }
-        
-        // Update reset time
-        if (rateLimit.dailyResetTime > now) {
-            const hoursUntil = Math.ceil((rateLimit.dailyResetTime - now) / (1000 * 60 * 60));
-            document.getElementById('gemini-reset-time').textContent = `In ${hoursUntil} hour${hoursUntil > 1 ? 's' : ''}`;
-        } else {
-            document.getElementById('gemini-reset-time').textContent = 'Expired (will reset on next request)';
-        }
-        
-        // Update status and show warnings
         const usageMessage = document.getElementById('usage-message');
         const statusSpan = document.getElementById('gemini-status');
         
-        if (rateLimit.dailyCount >= 20) {
-            statusSpan.textContent = '🔴 Limit Reached';
-            statusSpan.style.color = '#dc3545';
+        let isCooling = rateLimit.coolDownUntil && now < rateLimit.coolDownUntil;
+        
+        if (rateLimit.invalid) {
+            statusSpan.textContent = '🔴 Invalid/Expired Key';
+            statusSpan.style.color = '#f87171';
             usageMessage.className = 'usage-message warning';
-            usageMessage.textContent = '⚠️ Daily limit reached! Create a new API key in a different project and update it above to continue processing emails.';
-        } else if (rateLimit.dailyCount >= 15) {
-            statusSpan.textContent = '🟡 Nearly Full';
-            statusSpan.style.color = '#ffc107';
+            usageMessage.style.display = 'block';
+            usageMessage.textContent = '⚠️ Your API key is invalid or expired. Please update it above.';
+        } else if (isCooling) {
+            const mins = Math.ceil((rateLimit.coolDownUntil - now) / 60000);
+            statusSpan.textContent = `⏳ Cooling Down (${mins}m remaining)`;
+            statusSpan.style.color = '#fbbf24';
             usageMessage.className = 'usage-message warning';
-            usageMessage.textContent = `⚠️ Only ${20 - rateLimit.dailyCount} requests remaining today. Consider switching to a new API key soon.`;
+            usageMessage.style.display = 'block';
+            usageMessage.textContent = `⚠️ Key rate-limited by Google. Cooling down for ${mins} more minute(s).`;
         } else {
             statusSpan.textContent = '🟢 Ready';
-            statusSpan.style.color = '#28a745';
+            statusSpan.style.color = '#34d399';
             usageMessage.style.display = 'none';
         }
+        
+        // Hide daily counts as Google handles quota, not us
+        document.getElementById('gemini-daily-count').textContent = isCooling ? 'Limited' : 'Ready';
+        document.getElementById('gemini-last-request').textContent = 'Dynamic';
+        document.getElementById('gemini-reset-time').textContent = isCooling ? 'Short cool-down active' : 'None';
     }
     
     // Update multi-key usage display
@@ -276,43 +257,29 @@ document.addEventListener('DOMContentLoaded', async function() {
         container.innerHTML = '';
         
         keys.forEach((key, index) => {
-            const rateLimit = rateLimits[index] || { requests: [], dailyCount: 0, dailyResetTime: now };
+            const rateLimit = rateLimits[index] || { coolDownUntil: 0, invalid: false };
             const isActive = index === currentIndex;
             
             const card = document.createElement('div');
             card.className = `key-usage-card${isActive ? ' active' : ''}`;
             
             // Determine status
-            let statusBadge = '';
-            if (isActive) {
-                statusBadge = '<span class="key-status active">🔵 ACTIVE</span>';
-            } else if (rateLimit.dailyCount >= 20) {
-                statusBadge = '<span class="key-status limit">🔴 LIMIT</span>';
-            } else if (rateLimit.dailyCount >= 15) {
-                statusBadge = '<span class="key-status warning">🟡 NEAR LIMIT</span>';
+            let badgeSpanText = '';
+            let badgeSpanClass = '';
+            let isCooling = rateLimit.coolDownUntil && now < rateLimit.coolDownUntil;
+            
+            if (rateLimit.invalid) {
+                badgeSpanText = '🔴 INVALID';
+                badgeSpanClass = 'key-status limit';
+            } else if (isCooling) {
+                badgeSpanText = '⏳ COOLING';
+                badgeSpanClass = 'key-status warning';
+            } else if (isActive) {
+                badgeSpanText = '🔵 ACTIVE';
+                badgeSpanClass = 'key-status active';
             } else {
-                statusBadge = '<span class="key-status ready">🟢 READY</span>';
-            }
-            
-            // Calculate reset time
-            let resetText = '--';
-            if (rateLimit.dailyResetTime > now) {
-                const hoursUntil = Math.ceil((rateLimit.dailyResetTime - now) / (1000 * 60 * 60));
-                resetText = `${hoursUntil}h`;
-            }
-            
-            // Last request time
-            let lastRequestText = 'Never';
-            if (rateLimit.requests && rateLimit.requests.length > 0) {
-                const lastRequest = Math.max(...rateLimit.requests);
-                const minutesAgo = Math.floor((now - lastRequest) / 60000);
-                if (minutesAgo < 1) {
-                    lastRequestText = 'Just now';
-                } else if (minutesAgo < 60) {
-                    lastRequestText = `${minutesAgo}m ago`;
-                } else {
-                    lastRequestText = `${Math.floor(minutesAgo / 60)}h ago`;
-                }
+                badgeSpanText = '🟢 READY';
+                badgeSpanClass = 'key-status ready';
             }
             
             // Mask key for display
@@ -328,19 +295,8 @@ document.addEventListener('DOMContentLoaded', async function() {
             keyTitleSpan.textContent = `Key ${index + 1}: ${maskedKey}`;
             
             const badgeSpan = document.createElement('span');
-            if (isActive) {
-                badgeSpan.className = 'key-status active';
-                badgeSpan.textContent = '🔵 ACTIVE';
-            } else if (rateLimit.dailyCount >= 20) {
-                badgeSpan.className = 'key-status limit';
-                badgeSpan.textContent = '🔴 LIMIT';
-            } else if (rateLimit.dailyCount >= 15) {
-                badgeSpan.className = 'key-status warning';
-                badgeSpan.textContent = '🟡 NEAR LIMIT';
-            } else {
-                badgeSpan.className = 'key-status ready';
-                badgeSpan.textContent = '🟢 READY';
-            }
+            badgeSpan.className = badgeSpanClass;
+            badgeSpan.textContent = badgeSpanText;
             
             headerDiv.appendChild(keyTitleSpan);
             headerDiv.appendChild(badgeSpan);
@@ -365,10 +321,20 @@ document.addEventListener('DOMContentLoaded', async function() {
                 statsDiv.appendChild(item);
             };
             
-            addStatItem('Usage:', `${rateLimit.dailyCount}/20`);
-            addStatItem('Last:', lastRequestText);
-            addStatItem('Resets:', resetText);
-            addStatItem('Available:', (20 - rateLimit.dailyCount).toString());
+            let statusText = 'Ready to use';
+            let cooldownText = 'None';
+            if (rateLimit.invalid) {
+                statusText = 'Invalid/Expired Key';
+            } else if (isCooling) {
+                statusText = 'Temporarily Rate-Limited';
+                const remainingMinutes = Math.ceil((rateLimit.coolDownUntil - now) / 60000);
+                cooldownText = `${remainingMinutes} min${remainingMinutes > 1 ? 's' : ''}`;
+            } else if (isActive) {
+                statusText = 'Primary active key';
+            }
+            
+            addStatItem('Status:', statusText);
+            addStatItem('Cooldown:', cooldownText);
             
             card.appendChild(headerDiv);
             card.appendChild(statsDiv);
@@ -565,6 +531,20 @@ document.addEventListener('DOMContentLoaded', async function() {
                 statusSpan.className = 'key-test-result success';
                 const saveBtn = keyItemElement.querySelector('.inline-save-btn');
                 if (saveBtn) saveBtn.style.display = 'inline-block';
+                
+                // Clear any rate-limit cool-down or invalidation states in storage
+                browser.storage.local.get(['geminiRateLimits']).then(result => {
+                    if (result.geminiRateLimits) {
+                        const rateLimits = result.geminiRateLimits;
+                        if (rateLimits[index]) {
+                            rateLimits[index].coolDownUntil = 0;
+                            rateLimits[index].invalid = false;
+                            browser.storage.local.set({ geminiRateLimits: rateLimits }).then(() => {
+                                updateGeminiUsageDisplay();
+                            });
+                        }
+                    }
+                });
             } else {
                 const saveBtn = keyItemElement.querySelector('.inline-save-btn');
                 if (saveBtn) saveBtn.style.display = 'none';
@@ -656,6 +636,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('refresh-usage').addEventListener('click', async () => {
         await updateGeminiUsageDisplay();
         const usageMessage = document.getElementById('usage-message');
+        usageMessage.style.display = 'block';
         usageMessage.className = 'usage-message info';
         usageMessage.textContent = '✓ Usage information refreshed.';
         setTimeout(() => {
@@ -1574,6 +1555,9 @@ document.addEventListener('DOMContentLoaded', async function() {
             const tdStatus = document.createElement('td');
             tdStatus.className = entry.status.toLowerCase();
             tdStatus.textContent = entry.status;
+
+            const tdModel = document.createElement('td');
+            tdModel.textContent = entry.model || 'AI';
             
             const tdDest = document.createElement('td');
             tdDest.textContent = entry.destination;
@@ -1581,6 +1565,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             tr.appendChild(tdTime);
             tr.appendChild(tdSubject);
             tr.appendChild(tdStatus);
+            tr.appendChild(tdModel);
             tr.appendChild(tdDest);
             
             historyBody.appendChild(tr);
