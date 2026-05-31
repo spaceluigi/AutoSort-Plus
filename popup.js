@@ -135,20 +135,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     openSettingsLink.addEventListener('click', (e) => {
         e.preventDefault();
         try {
-            browser.tabs.create({ url: browser.runtime.getURL("options.html") });
+            browser.tabs.create({ url: browser.runtime.getURL("options.html") }).then(() => {
+                window.close(); // Close popup after tab is created
+            });
         } catch (err) {
             browser.runtime.openOptionsPage();
+            window.close();
         }
-        window.close(); // Close popup
     });
 
     viewHistoryLink.addEventListener('click', (e) => {
         e.preventDefault();
         try {
-            browser.tabs.create({ url: browser.runtime.getURL("options.html#history-settings") });
+            browser.tabs.create({ url: browser.runtime.getURL("options.html#history-settings") }).then(() => {
+                window.close(); // Close popup after tab is created
+            });
         } catch (err) {
             browser.runtime.openOptionsPage();
+            window.close();
         }
-        window.close();
     });
 });
