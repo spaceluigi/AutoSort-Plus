@@ -141,6 +141,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Get subsection elements
         const ollamaSubsection = document.getElementById('ollama-settings-subsection');
         const apiKeySubsection = document.getElementById('api-key-subsection');
+        const geminiModelSubsection = document.getElementById('gemini-model-subsection');
         const geminiMultiKeysSubsection = document.getElementById('gemini-multi-keys-subsection');
         const geminiUsageSubsection = document.getElementById('gemini-usage-subsection');
         const rateLimitWarning = document.getElementById('rate-limit-warning');
@@ -154,6 +155,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (provider === 'gemini') {
             geminiPaidContainer.style.display = 'block';
             if (geminiMultiKeysSubsection) geminiMultiKeysSubsection.style.display = 'block';
+            if (geminiModelSubsection) geminiModelSubsection.style.display = 'block';
             if (geminiUsageSubsection) geminiUsageSubsection.style.display = 'block';
             if (apiKeySubsection) apiKeySubsection.style.display = 'none';
             if (ollamaSubsection) ollamaSubsection.style.display = 'none';
@@ -162,12 +164,14 @@ document.addEventListener('DOMContentLoaded', async function() {
             // Show Ollama settings, hide API key and Gemini sections
             geminiPaidContainer.style.display = 'none';
             if (geminiMultiKeysSubsection) geminiMultiKeysSubsection.style.display = 'none';
+            if (geminiModelSubsection) geminiModelSubsection.style.display = 'none';
             if (geminiUsageSubsection) geminiUsageSubsection.style.display = 'none';
             if (apiKeySubsection) apiKeySubsection.style.display = 'none';
             if (ollamaSubsection) ollamaSubsection.style.display = 'block';
         } else {
             geminiPaidContainer.style.display = 'none';
             if (geminiMultiKeysSubsection) geminiMultiKeysSubsection.style.display = 'none';
+            if (geminiModelSubsection) geminiModelSubsection.style.display = 'none';
             if (geminiUsageSubsection) geminiUsageSubsection.style.display = 'none';
             if (apiKeySubsection) apiKeySubsection.style.display = 'block';
             if (ollamaSubsection) ollamaSubsection.style.display = 'none';
@@ -488,7 +492,19 @@ document.addEventListener('DOMContentLoaded', async function() {
             statusSpan.textContent = 'Testing...';
             statusSpan.className = 'key-test-result testing';
             
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+            const geminiModelSelectElement = document.getElementById('gemini-model');
+            const geminiCustomModelInputElement = document.getElementById('gemini-custom-model');
+            
+            let modelToUse = 'gemini-2.5-flash';
+            if (geminiModelSelectElement) {
+                if (geminiModelSelectElement.value === 'custom' && geminiCustomModelInputElement && geminiCustomModelInputElement.value.trim()) {
+                    modelToUse = geminiCustomModelInputElement.value.trim();
+                } else {
+                    modelToUse = geminiModelSelectElement.value;
+                }
+            }
+            
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -527,6 +543,19 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Initialize provider info
     updateProviderInfo();
     aiProviderSelect.addEventListener('change', updateProviderInfo);
+    
+    // Google Model selector change listener
+    const geminiModelSelect = document.getElementById('gemini-model');
+    const geminiCustomModelInput = document.getElementById('gemini-custom-model');
+    if (geminiModelSelect && geminiCustomModelInput) {
+        geminiModelSelect.addEventListener('change', function() {
+            if (this.value === 'custom') {
+                geminiCustomModelInput.style.display = 'block';
+            } else {
+                geminiCustomModelInput.style.display = 'none';
+            }
+        });
+    }
     
     // Add Gemini key button
     addGeminiKeyButton.addEventListener('click', () => {
@@ -627,7 +656,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
 
     // Load saved settings
-    browser.storage.local.get(['labels', 'apiKey', 'geminiApiKeys', 'aiProvider', 'enableAi', 'geminiPaidPlan', 'ollamaUrl', 'ollamaModel', 'ollamaCustomModel', 'ollamaCpuOnly']).then(result => {
+    browser.storage.local.get(['labels', 'apiKey', 'geminiApiKeys', 'aiProvider', 'enableAi', 'geminiPaidPlan', 'ollamaUrl', 'ollamaModel', 'ollamaCustomModel', 'ollamaCpuOnly', 'geminiModel', 'geminiCustomModel', 'enableLogging']).then(result => {
         if (result.labels && result.labels.length > 0) {
             result.labels.forEach(label => {
                 addLabelInput(label);
@@ -682,6 +711,22 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Set gemini paid plan checkbox
         geminiPaidCheckbox.checked = result.geminiPaidPlan === true;
         
+        // Load Google model settings
+        if (result.geminiModel && document.getElementById('gemini-model')) {
+            const geminiModelSelectElement = document.getElementById('gemini-model');
+            geminiModelSelectElement.value = result.geminiModel;
+            const geminiCustomModelInputElement = document.getElementById('gemini-custom-model');
+            if (result.geminiModel === 'custom' && result.geminiCustomModel && geminiCustomModelInputElement) {
+                geminiCustomModelInputElement.value = result.geminiCustomModel;
+                geminiCustomModelInputElement.style.display = 'block';
+            }
+        }
+        
+        // Load detailed logging checkbox
+        if (document.getElementById('enable-logging')) {
+            document.getElementById('enable-logging').checked = result.enableLogging === true;
+        }
+        
         updateSaveButtonState();
     });
     
@@ -710,7 +755,19 @@ document.addEventListener('DOMContentLoaded', async function() {
             
             let response;
             if (provider === 'gemini') {
-                response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+                const geminiModelSelectElement = document.getElementById('gemini-model');
+                const geminiCustomModelInputElement = document.getElementById('gemini-custom-model');
+                
+                let modelToUse = 'gemini-2.5-flash';
+                if (geminiModelSelectElement) {
+                    if (geminiModelSelectElement.value === 'custom' && geminiCustomModelInputElement && geminiCustomModelInputElement.value.trim()) {
+                        modelToUse = geminiCustomModelInputElement.value.trim();
+                    } else {
+                        modelToUse = geminiModelSelectElement.value;
+                    }
+                }
+                
+                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1231,7 +1288,10 @@ document.addEventListener('DOMContentLoaded', async function() {
                 currentGeminiKeyIndex: 0, // Start with first key
                 aiProvider: provider,
                 enableAi: document.getElementById('enable-ai').checked,
-                geminiPaidPlan: geminiPaidCheckbox.checked
+                enableLogging: document.getElementById('enable-logging').checked,
+                geminiPaidPlan: geminiPaidCheckbox.checked,
+                geminiModel: document.getElementById('gemini-model').value,
+                geminiCustomModel: document.getElementById('gemini-custom-model').value.trim()
             };
             
             // Initialize rate limits array for all keys if not exists
@@ -1266,6 +1326,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 labels: labels,
                 aiProvider: provider,
                 enableAi: document.getElementById('enable-ai').checked,
+                enableLogging: document.getElementById('enable-logging').checked,
                 ollamaUrl: ollamaUrlInput.value.trim() || 'http://localhost:11434',
                 ollamaModel: ollamaModel,
                 ollamaCustomModel: ollamaCustomModelInput.value.trim(),
@@ -1292,6 +1353,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 apiKey: apiKey,
                 aiProvider: provider,
                 enableAi: document.getElementById('enable-ai').checked,
+                enableLogging: document.getElementById('enable-logging').checked,
                 geminiPaidPlan: geminiPaidCheckbox.checked
             };
 

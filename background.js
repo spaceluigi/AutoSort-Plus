@@ -1,3 +1,18 @@
+// Global application status for dashboard
+let appStatus = { state: 'idle', title: 'AutoSort+ Ready', message: 'Select emails and click sort below' };
+
+// Global debug logging helper
+async function debugLog(message, ...args) {
+    try {
+        const data = await browser.storage.local.get('enableLogging');
+        if (data.enableLogging === true) {
+            console.log(`[AutoSort+ DEBUG] ${message}`, ...args);
+        }
+    } catch (e) {
+        console.log(`[AutoSort+ DEBUG] ${message}`, ...args);
+    }
+}
+
 // Listen for messages from the options page
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === "applyLabels") {
@@ -337,7 +352,57 @@ async function trackGeminiRequest(keyIndex = null) {
         
         await browser.storage.local.set({ geminiRateLimit: rateLimit });
         
-        console.log(`Gemini requests: ${rateLimit.dailyCount}/20 today, ${rateLimit.requests.length} in last minute`);
+        await debugLog(`Gemini requests: ${rateLimit.dailyCount}/20 today, ${rateLimit.requests.length} in last minute`);
+    }
+}
+
+// Dynamically update rate limit statistics based on HTTP response headers
+async function updateGeminiRateLimitFromHeaders(keyIndex, limit, remaining, reset) {
+    try {
+        const now = Date.now();
+        const data = await browser.storage.local.get(['geminiRateLimits']);
+        if (data.geminiRateLimits) {
+            const rateLimits = data.geminiRateLimits;
+            const rateLimit = rateLimits[keyIndex];
+            
+            if (rateLimit) {
+                const parsedRemaining = parseInt(remaining, 10);
+                const parsedLimit = parseInt(limit, 10);
+                
+                if (!isNaN(parsedRemaining) && !isNaN(parsedLimit)) {
+                    // Update dailyCount to align with remaining quota
+                    rateLimit.dailyCount = Math.max(0, parsedLimit - parsedRemaining);
+                }
+                
+                if (reset) {
+                    let resetTime = parseFloat(reset);
+                    if (!isNaN(resetTime)) {
+                        if (resetTime < 10000000) {
+                            // Seconds until reset
+                            rateLimit.dailyResetTime = now + (resetTime * 1000);
+                        } else {
+                            // Unix epoch timestamp
+                            rateLimit.dailyResetTime = resetTime;
+                        }
+                    }
+                }
+                
+                await browser.storage.local.set({ geminiRateLimits: rateLimits });
+                await debugLog(`Key #${keyIndex + 1} quota updated dynamically from headers. Remaining: ${remaining}/${limit}`);
+                
+                // Smart key switching: if 0 remaining, rotate immediately
+                if (parsedRemaining === 0) {
+                    const keysData = await browser.storage.local.get(['geminiApiKeys', 'currentGeminiKeyIndex']);
+                    if (keysData.geminiApiKeys && keysData.geminiApiKeys.length > 1) {
+                        const nextIndex = (keyIndex + 1) % keysData.geminiApiKeys.length;
+                        await browser.storage.local.set({ currentGeminiKeyIndex: nextIndex });
+                        await debugLog(`⚠️ Key #${keyIndex + 1} has 0 remaining quota! Smart rotated to key #${nextIndex + 1}`);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        await debugLog(`Error updating rate limits from headers: ${e.message}`);
     }
 }
 
@@ -400,7 +465,10 @@ async function analyzeEmailContent(emailContent) {
             'enableAi', 
             'geminiPaidPlan', 
             'geminiRateLimit',
-            'geminiRateLimits'
+            'geminiRateLimits',
+            'geminiModel',
+            'geminiCustomModel',
+            'enableLogging'
         ]);
         const provider = settings.aiProvider || 'gemini';
         
@@ -514,8 +582,12 @@ async function analyzeEmailContent(emailContent) {
         let data;
 
         if (provider === 'gemini') {
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKeyToUse}`;
-            console.log("Making API request to Gemini...");
+            const geminiModel = settings.geminiModel || 'gemini-2.5-flash';
+            const geminiCustomModel = settings.geminiCustomModel || '';
+            const modelToUse = (geminiModel === 'custom' && geminiCustomModel) ? geminiCustomModel : geminiModel;
+            
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKeyToUse}`;
+            await debugLog(`Making API request to Google API using model: ${modelToUse}...`);
             
             // Track request for rate limiting (free tier only)
             if (!settings.geminiPaidPlan) {
@@ -710,7 +782,18 @@ async function analyzeEmailContent(emailContent) {
         }
 
         if (response) {
-            console.log("API response status:", response.status);
+            await debugLog(`API response status: ${response.status}`);
+            
+            // Extract rate limit metadata from response headers
+            if (provider === 'gemini') {
+                const limit = response.headers.get('x-ratelimit-limit') || response.headers.get('ratelimit-limit') || response.headers.get('x-quota-limit');
+                const remaining = response.headers.get('x-ratelimit-remaining') || response.headers.get('ratelimit-remaining') || response.headers.get('x-quota-remaining');
+                const reset = response.headers.get('x-ratelimit-reset') || response.headers.get('ratelimit-reset') || response.headers.get('x-quota-reset');
+                
+                if (remaining !== null && keyIndexToUse !== null) {
+                    await updateGeminiRateLimitFromHeaders(keyIndexToUse, limit, remaining, reset);
+                }
+            }
 
             if (!response.ok) {
                 let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
@@ -1187,8 +1270,6 @@ browser.menus.onClicked.addListener(async (info, tab) => {
         }
     } else if (info.menuItemId === "autosort-analyze") {
         console.log("AI analysis selected - starting process");
-        await showNotification("AutoSort+", "Starting AI analysis of selected messages...");
-        
         try {
             // Get the current mail tab
             const mailTabs = await browser.mailTabs.query({ active: true, currentWindow: true });
@@ -1209,81 +1290,189 @@ browser.menus.onClicked.addListener(async (info, tab) => {
                 return;
             }
 
-            console.log(`Analyzing ${selectedMessageList.messages.length} selected messages`);
-            
-            for (const message of selectedMessageList.messages) {
-                // Get the full message with body
-                const fullMessage = await browser.messages.getFull(message.id);
-                console.log("Got full message:", fullMessage ? "yes" : "no");
-                console.log("Message content:", fullMessage);
-
-                if (!fullMessage) {
-                    console.error("Could not get message content");
-                    continue;
-                }
-
-                // Function to recursively extract text from message parts
-                function extractTextFromParts(parts) {
-                    let text = "";
-                    if (!parts) return text;
-
-                    for (const part of parts) {
-                        console.log("Processing part:", {
-                            contentType: part.contentType,
-                            partName: part.partName,
-                            size: part.size
-                        });
-
-                        if (part.parts) {
-                            // Recursively process nested parts
-                            text += extractTextFromParts(part.parts);
-                        }
-                        
-                        if (part.contentType === "text/plain") {
-                            text += part.body + "\n";
-                        } else if (part.contentType === "text/html" && !text) {
-                            // Only use HTML if we haven't found plain text
-                            text = browser.messengerUtilities.convertToPlainText(part.body);
-                        } else if (part.contentType === "message/rfc822" && part.body) {
-                            // Handle message/rfc822 parts
-                            text += part.body + "\n";
-                        }
-                    }
-                    return text;
-                }
-
-                // Extract email content from the message
-                let emailContent = "";
-                if (fullMessage.parts) {
-                    emailContent = await extractTextFromParts(fullMessage.parts);
-                } else if (fullMessage.body) {
-                    emailContent = fullMessage.body;
-                }
-
-                console.log("Extracted email content:", emailContent || "<empty string>");
-
-                if (!emailContent) {
-                    console.error("No readable content found in message");
-                    await showNotification("AutoSort+ Error", "Could not extract email content");
-                    continue;
-                }
-
-                console.log("Analyzing message content");
-                const label = await analyzeEmailContent(emailContent);
-
-                // Skip if AI returned null/no label
-                if (!label || String(label).trim().toLowerCase() === "null") {
-                    console.log("Skipping message because generated label was null/empty");
-                    continue;
-                }
-
-                console.log("Applying label:", label);
-                await applyLabelsToMessages([message], label);
-                await showNotification("AutoSort+", `Successfully applied label: ${label}`);
-            }
+            // Call the modular trigger
+            triggerAISortingOnMessages(selectedMessageList.messages);
         } catch (error) {
-            console.error("Error during AI analysis:", error);
+            console.error("Error initiating AI analysis:", error);
             await showNotification("AutoSort+ Error", `Error: ${error.message}`);
         }
     }
-}); 
+});
+
+// Modular AI analysis loop that handles status updates and rate-limiting safely
+async function triggerAISortingOnMessages(messages) {
+    if (!messages || messages.length === 0) {
+        await debugLog("No messages provided for AI sorting");
+        return;
+    }
+
+    appStatus = {
+        state: 'processing',
+        title: 'Sorting Emails',
+        message: `Initializing AI analysis for ${messages.length} message(s)...`
+    };
+
+    let processedCount = 0;
+    let successfullyLabeledCount = 0;
+    
+    try {
+        for (const message of messages) {
+            processedCount++;
+            
+            // Generate progress status message
+            const subject = message.subject || "(No Subject)";
+            appStatus.message = `Analyzing email ${processedCount} of ${messages.length}: "${subject.substring(0, 30)}..."`;
+            
+            await debugLog(`triggerAISortingOnMessages: processing ${processedCount}/${messages.length} - "${subject}"`);
+
+            // Get the full message with body
+            const fullMessage = await browser.messages.getFull(message.id);
+            if (!fullMessage) {
+                await debugLog(`Could not get content for message ID: ${message.id}`);
+                continue;
+            }
+
+            // Function to recursively extract text from message parts
+            function extractTextFromParts(parts) {
+                let text = "";
+                if (!parts) return text;
+
+                for (const part of parts) {
+                    if (part.parts) {
+                        text += extractTextFromParts(part.parts);
+                    }
+                    
+                    if (part.contentType === "text/plain") {
+                        text += part.body + "\n";
+                    } else if (part.contentType === "text/html" && !text) {
+                        text = browser.messengerUtilities.convertToPlainText(part.body);
+                    } else if (part.contentType === "message/rfc822" && part.body) {
+                        text += part.body + "\n";
+                    }
+                }
+                return text;
+            }
+
+            // Extract email content from the message
+            let emailContent = "";
+            if (fullMessage.parts) {
+                emailContent = await extractTextFromParts(fullMessage.parts);
+            } else if (fullMessage.body) {
+                emailContent = fullMessage.body;
+            }
+
+            if (!emailContent) {
+                await debugLog(`No readable content found in message ID: ${message.id}`);
+                continue;
+            }
+
+            await debugLog("Analyzing message content via AI...");
+            appStatus.message = `Querying AI for email ${processedCount} of ${messages.length}...`;
+            const label = await analyzeEmailContent(emailContent);
+
+            // Skip if AI returned null/no label
+            if (!label || String(label).trim().toLowerCase() === "null") {
+                await debugLog("Skipping message because generated label was null/empty");
+                continue;
+            }
+
+            await debugLog(`Applying label: ${label}`);
+            appStatus.message = `Moving email ${processedCount} of ${messages.length} to "${label}"...`;
+            await applyLabelsToMessages([message], label);
+            successfullyLabeledCount++;
+        }
+
+        // Finalize state
+        appStatus = {
+            state: 'completed',
+            title: 'Sorting Completed',
+            message: `Successfully processed ${messages.length} message(s). Labeled: ${successfullyLabeledCount}.`
+        };
+
+        // Reset to idle after 5 seconds
+        setTimeout(() => {
+            if (appStatus.state === 'completed') {
+                appStatus = {
+                    state: 'idle',
+                    title: 'AutoSort+ Ready',
+                    message: 'Select emails and click sort below'
+                };
+            }
+        }, 5000);
+
+    } catch (error) {
+        await debugLog("Error during AI sorting orchestration:", error);
+        appStatus = {
+            state: 'warning',
+            title: 'Sorting Error',
+            message: `Error: ${error.message}`
+        };
+        await showNotification("AutoSort+ Error", `Error: ${error.message}`);
+    }
+}
+
+// Manual triggers for popup/toolbar actions
+async function runAutoSortOnSelected() {
+    await debugLog("runAutoSortOnSelected initiated from popup");
+    try {
+        const mailTabs = await browser.mailTabs.query({ active: true, currentWindow: true });
+        if (!mailTabs || mailTabs.length === 0) {
+            throw new Error("No active mail tab found. Please select a mail tab.");
+        }
+        
+        const selectedMessageList = await browser.mailTabs.getSelectedMessages(mailTabs[0].id);
+        if (!selectedMessageList || !selectedMessageList.messages || selectedMessageList.messages.length === 0) {
+            throw new Error("No messages are currently selected/highlighted.");
+        }
+        
+        // Delegate to our modular process without blocking popup UI thread
+        triggerAISortingOnMessages(selectedMessageList.messages);
+    } catch (error) {
+        await debugLog("Error in runAutoSortOnSelected:", error);
+        appStatus = {
+            state: 'warning',
+            title: 'Sorting Error',
+            message: error.message
+        };
+        throw error;
+    }
+}
+
+async function runAutoSortOnUnread() {
+    await debugLog("runAutoSortOnUnread initiated from popup");
+    try {
+        const mailTabs = await browser.mailTabs.query({ active: true, currentWindow: true });
+        if (!mailTabs || mailTabs.length === 0) {
+            throw new Error("No active mail tab found. Please select a mail tab.");
+        }
+        
+        const activeFolder = await browser.mailTabs.getSelectedFolder(mailTabs[0].id);
+        if (!activeFolder) {
+            throw new Error("No folder is currently selected.");
+        }
+        
+        await debugLog(`Active folder: ${activeFolder.name || activeFolder.path}`);
+        
+        const messageList = await browser.messages.query({
+            folder: activeFolder,
+            unread: true
+        });
+        
+        if (!messageList || !messageList.messages || messageList.messages.length === 0) {
+            throw new Error("No unread messages found in the active folder.");
+        }
+        
+        await debugLog(`Found ${messageList.messages.length} unread messages. Triggering AI sorting.`);
+        
+        // Delegate to modular process
+        triggerAISortingOnMessages(messageList.messages);
+    } catch (error) {
+        await debugLog("Error in runAutoSortOnUnread:", error);
+        appStatus = {
+            state: 'warning',
+            title: 'Sorting Error',
+            message: error.message
+        };
+        throw error;
+    }
+} 

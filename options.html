@@ -90,6 +90,21 @@
             </div>
             </div>
             
+            <div class="subsection" id="gemini-model-subsection" style="display: none;">
+                <h3>🤖 Google API Model Selection</h3>
+                <div class="input-group">
+                    <label for="gemini-model">Google Model:</label>
+                    <select id="gemini-model" class="provider-select">
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Default)</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        <option value="gemma-2-27b-it">Gemma 2 (27B - Google Hosted)</option>
+                        <option value="gemma-2-9b-it">Gemma 2 (9B - Google Hosted)</option>
+                        <option value="custom">Custom Google Model (enter below)</option>
+                    </select>
+                    <input type="text" id="gemini-custom-model" class="api-key-input" placeholder="e.g., gemma-4-31b-it" style="display: none; margin-top: 10px;">
+                </div>
+            </div>
+            
             <div class="subsection" id="gemini-multi-keys-subsection" style="display: none;">
                 <h3>🔄 Multiple Gemini API Keys</h3>
                 <p class="info-text">Add multiple API keys from different Google Cloud projects. The extension will automatically rotate between them when rate limits are reached.</p>
@@ -101,8 +116,14 @@
             
             <div class="subsection" id="ai-general-subsection">
                 <h3>⚙️ General Settings</h3>
-                <input type="checkbox" id="enable-ai" checked>
-                <label for="enable-ai">Enable AI-powered sorting</label>
+                <div class="checkbox-container" style="margin-bottom: 10px;">
+                    <input type="checkbox" id="enable-ai" checked>
+                    <label for="enable-ai">Enable AI-powered sorting</label>
+                </div>
+                <div class="checkbox-container">
+                    <input type="checkbox" id="enable-logging">
+                    <label for="enable-logging">Enable Detailed Logging (Debug Mode)</label>
+                </div>
             </div>
                 <div class="checkbox-container" id="gemini-paid-container" style="display: none;">
                     <input type="checkbox" id="gemini-paid-plan">

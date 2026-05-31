@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AutoSort+ Dashboard</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="popup-container">
+        <!-- Header -->
+        <header class="popup-header">
+            <div class="logo-area">
+                <span class="logo-icon">🤖</span>
+                <h1>AutoSort+</h1>
+            </div>
+            <a href="#" id="open-settings" class="settings-link" title="Open Settings">⚙️</a>
+        </header>
+
+        <!-- Status Dashboard Card -->
+        <div class="status-card">
+            <div class="pulse-container">
+                <div id="status-pulse" class="pulse-indicator pulse-idle"></div>
+            </div>
+            <div class="status-details">
+                <span id="status-title" class="status-title">Ready to Sort</span>
+                <span id="status-message" class="status-message">Select emails and click sort below</span>
+            </div>
+        </div>
+
+        <!-- Progress Log Panel -->
+        <div id="progress-panel" class="progress-panel" style="display: none;">
+            <div class="spinner-container">
+                <div class="spinner"></div>
+            </div>
+            <div id="progress-text" class="progress-text">Analyzing email...</div>
+        </div>
+
+        <!-- Action Panel -->
+        <div class="actions-panel">
+            <button id="btn-sort-selected" class="action-btn btn-primary">
+                <span class="btn-icon">⚡</span>
+                <span class="btn-text">Sort Selected Emails</span>
+            </button>
+            <button id="btn-sort-unread" class="action-btn btn-secondary">
+                <span class="btn-icon">📁</span>
+                <span class="btn-text">Sort Unread in Folder</span>
+            </button>
+        </div>
+
+        <!-- Footer Stats -->
+        <footer class="popup-footer">
+            <div class="footer-stat">
+                <span class="stat-label">Model:</span>
+                <span id="active-model" class="stat-val">Loading...</span>
+            </div>
+            <a href="#" id="view-history" class="history-link">View History 📜</a>
+        </footer>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
