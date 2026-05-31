@@ -556,6 +556,24 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         });
     }
+
+    // Supervisor Final Check checkbox change listener
+    const geminiEnableFinalCheck = document.getElementById('gemini-enable-final-check');
+    const geminiFinalCheckSubsection = document.getElementById('gemini-final-check-subsection');
+    if (geminiEnableFinalCheck && geminiFinalCheckSubsection) {
+        geminiEnableFinalCheck.addEventListener('change', function() {
+            geminiFinalCheckSubsection.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+
+    // Supervisor Model selector change listener
+    const geminiFinalCheckModel = document.getElementById('gemini-final-check-model');
+    const geminiFinalCheckCustomModel = document.getElementById('gemini-final-check-custom-model');
+    if (geminiFinalCheckModel && geminiFinalCheckCustomModel) {
+        geminiFinalCheckModel.addEventListener('change', function() {
+            geminiFinalCheckCustomModel.style.display = this.value === 'custom' ? 'block' : 'none';
+        });
+    }
     
     // Add Gemini key button
     addGeminiKeyButton.addEventListener('click', () => {
@@ -656,7 +674,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
 
     // Load saved settings
-    browser.storage.local.get(['labels', 'apiKey', 'geminiApiKeys', 'aiProvider', 'enableAi', 'geminiPaidPlan', 'ollamaUrl', 'ollamaModel', 'ollamaCustomModel', 'ollamaCpuOnly', 'geminiModel', 'geminiCustomModel', 'enableLogging']).then(result => {
+    browser.storage.local.get(['labels', 'apiKey', 'geminiApiKeys', 'aiProvider', 'enableAi', 'geminiPaidPlan', 'ollamaUrl', 'ollamaModel', 'ollamaCustomModel', 'ollamaCpuOnly', 'geminiModel', 'geminiCustomModel', 'enableLogging', 'geminiEnableFinalCheck', 'geminiFinalCheckModel', 'geminiFinalCheckCustomModel']).then(result => {
         if (result.labels && result.labels.length > 0) {
             result.labels.forEach(label => {
                 addLabelInput(label);
@@ -719,6 +737,28 @@ document.addEventListener('DOMContentLoaded', async function() {
             if (result.geminiModel === 'custom' && result.geminiCustomModel && geminiCustomModelInputElement) {
                 geminiCustomModelInputElement.value = result.geminiCustomModel;
                 geminiCustomModelInputElement.style.display = 'block';
+            }
+        }
+
+        // Load Supervisor validation settings
+        if (document.getElementById('gemini-enable-final-check')) {
+            const finalCheckCheckbox = document.getElementById('gemini-enable-final-check');
+            finalCheckCheckbox.checked = result.geminiEnableFinalCheck === true;
+            
+            const finalCheckSubsection = document.getElementById('gemini-final-check-subsection');
+            if (finalCheckSubsection) {
+                finalCheckSubsection.style.display = result.geminiEnableFinalCheck === true ? 'block' : 'none';
+            }
+            
+            if (result.geminiFinalCheckModel && document.getElementById('gemini-final-check-model')) {
+                const finalCheckModelSelect = document.getElementById('gemini-final-check-model');
+                finalCheckModelSelect.value = result.geminiFinalCheckModel;
+                
+                const finalCheckCustomInput = document.getElementById('gemini-final-check-custom-model');
+                if (result.geminiFinalCheckModel === 'custom' && result.geminiFinalCheckCustomModel && finalCheckCustomInput) {
+                    finalCheckCustomInput.value = result.geminiFinalCheckCustomModel;
+                    finalCheckCustomInput.style.display = 'block';
+                }
             }
         }
         
@@ -1291,7 +1331,10 @@ document.addEventListener('DOMContentLoaded', async function() {
                 enableLogging: document.getElementById('enable-logging').checked,
                 geminiPaidPlan: geminiPaidCheckbox.checked,
                 geminiModel: document.getElementById('gemini-model').value,
-                geminiCustomModel: document.getElementById('gemini-custom-model').value.trim()
+                geminiCustomModel: document.getElementById('gemini-custom-model').value.trim(),
+                geminiEnableFinalCheck: document.getElementById('gemini-enable-final-check').checked,
+                geminiFinalCheckModel: document.getElementById('gemini-final-check-model').value,
+                geminiFinalCheckCustomModel: document.getElementById('gemini-final-check-custom-model').value.trim()
             };
             
             // Initialize rate limits array for all keys if not exists

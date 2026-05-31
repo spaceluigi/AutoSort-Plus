@@ -1316,6 +1316,16 @@ async function triggerAISortingOnMessages(messages) {
     let successfullyLabeledCount = 0;
     
     try {
+        // Fetch supervisor configurations and keys
+        const settings = await browser.storage.local.get([
+            'geminiEnableFinalCheck',
+            'geminiFinalCheckModel',
+            'geminiFinalCheckCustomModel',
+            'apiKey',
+            'geminiApiKeys',
+            'currentGeminiKeyIndex'
+        ]);
+
         for (const message of messages) {
             processedCount++;
             
@@ -1368,12 +1378,40 @@ async function triggerAISortingOnMessages(messages) {
 
             await debugLog("Analyzing message content via AI...");
             appStatus.message = `Querying AI for email ${processedCount} of ${messages.length}...`;
-            const label = await analyzeEmailContent(emailContent);
+            let label = await analyzeEmailContent(emailContent);
 
             // Skip if AI returned null/no label
             if (!label || String(label).trim().toLowerCase() === "null") {
                 await debugLog("Skipping message because generated label was null/empty");
                 continue;
+            }
+
+            // Stage 2: Supervisor Validation Check
+            if (settings.geminiEnableFinalCheck === true) {
+                let supervisorModel = settings.geminiFinalCheckModel || 'gemini-3.5-flash';
+                if (supervisorModel === 'custom' && settings.geminiFinalCheckCustomModel) {
+                    supervisorModel = settings.geminiFinalCheckCustomModel;
+                }
+                
+                let activeApiKey = settings.apiKey;
+                if (settings.geminiApiKeys && settings.geminiApiKeys.length > 0) {
+                    activeApiKey = settings.geminiApiKeys[settings.currentGeminiKeyIndex || 0];
+                }
+                
+                if (activeApiKey) {
+                    await debugLog(`Supervising candidate label "${label}" via ${supervisorModel}...`);
+                    appStatus.message = `Supervising category proposal "${label}" via ${supervisorModel}...`;
+                    
+                    const validatedLabel = await validateLabelWithSupervisor(emailContent, label, supervisorModel, activeApiKey);
+                    await debugLog(`Supervisor validation result: "${validatedLabel}" (proposal was "${label}")`);
+                    
+                    label = validatedLabel;
+                    
+                    if (!label || String(label).trim().toLowerCase() === "null") {
+                        await debugLog("Supervisor rejected proposed label or returned null");
+                        continue;
+                    }
+                }
             }
 
             await debugLog(`Applying label: ${label}`);
@@ -1474,5 +1512,139 @@ async function runAutoSortOnUnread() {
             message: error.message
         };
         throw error;
+    }
+}
+
+// Function to validate primary proposed label using a secondary supervisor model
+async function validateLabelWithSupervisor(emailContent, proposedLabel, supervisorModel, apiKey) {
+    try {
+        await debugLog(`Supervisor check: proposed="${proposedLabel}" via model="${supervisorModel}"`);
+        
+        const settings = await browser.storage.local.get(['labels', 'geminiPaidPlan', 'geminiApiKeys', 'currentGeminiKeyIndex']);
+        const labelsList = settings.labels || [];
+        
+        if (labelsList.length === 0) {
+            await debugLog("Supervisor validation skipped: no folders/labels configured.");
+            return proposedLabel;
+        }
+
+        const systemInstruction = `You are a supervisor AI in an email classification pipeline. 
+Review the email and correct the category/folder classification proposed by a primary model if it is incorrect.
+You MUST select a category from this list: ${labelsList.join(', ')}.
+
+If the proposed classification "${proposedLabel}" is correct and fits best, output that exact category.
+If it is incorrect, output the correct category from the list.
+If no category in the list is appropriate, output "null".
+
+Your response MUST be a JSON object containing a "validatedLabel" field with the final chosen category name.`;
+
+        const prompt = `Proposed Category: "${proposedLabel}"
+
+Email Content:
+${emailContent}`;
+
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${supervisorModel}:generateContent?key=${apiKey}`;
+        
+        // Track API request for rate limits (free tier only)
+        if (!settings.geminiPaidPlan) {
+            let keyIndexToUse = null;
+            if (settings.geminiApiKeys && settings.geminiApiKeys.length > 0) {
+                keyIndexToUse = settings.currentGeminiKeyIndex || 0;
+            }
+            await trackGeminiRequest(keyIndexToUse);
+        }
+
+        const requestBody = {
+            systemInstruction: {
+                parts: [{ text: systemInstruction }]
+            },
+            contents: [{
+                role: "user",
+                parts: [{ text: prompt }]
+            }],
+            generationConfig: {
+                temperature: 0.1,
+                topK: 1,
+                topP: 1,
+                maxOutputTokens: 100,
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                        validatedLabel: {
+                            type: "STRING"
+                        }
+                    },
+                    required: ["validatedLabel"]
+                },
+                thinkingConfig: {
+                    thinkingBudget: 0
+                }
+            },
+            safetySettings: [
+                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+            ]
+        };
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        // Extract rate limits if headers exist
+        const limit = response.headers.get('x-ratelimit-limit') || response.headers.get('ratelimit-limit') || response.headers.get('x-quota-limit');
+        const remaining = response.headers.get('x-ratelimit-remaining') || response.headers.get('ratelimit-remaining') || response.headers.get('x-quota-remaining');
+        const reset = response.headers.get('x-ratelimit-reset') || response.headers.get('ratelimit-reset') || response.headers.get('x-quota-reset');
+        
+        if (remaining !== null && settings.geminiApiKeys && settings.geminiApiKeys.length > 0) {
+            const keyIndex = settings.currentGeminiKeyIndex || 0;
+            await updateGeminiRateLimitFromHeaders(keyIndex, limit, remaining, reset);
+        }
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errText}`);
+        }
+
+        const data = await response.json();
+        
+        if (data.candidates && data.candidates.length > 0 && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts.length > 0) {
+            const resultText = data.candidates[0].content.parts[0].text.trim();
+            const parsed = JSON.parse(resultText);
+            const validated = parsed.validatedLabel ? parsed.validatedLabel.trim() : null;
+            
+            if (validated && validated.toLowerCase() !== 'null') {
+                const lower = validated.toLowerCase();
+                // Match case-sensitively first
+                if (labelsList.includes(validated)) {
+                    return validated;
+                }
+                // Case-insensitive match or contains match
+                let matched = labelsList.find(l => l.toLowerCase() === lower);
+                if (!matched) {
+                    matched = labelsList.find(l => lower.includes(l.toLowerCase()) || l.toLowerCase().includes(lower));
+                }
+                if (matched) {
+                    await debugLog(`Supervisor adjusted classification to: "${matched}"`);
+                    return matched;
+                }
+            } else if (validated === 'null') {
+                await debugLog("Supervisor explicitly selected 'null' (toss/no match).");
+                return "null";
+            }
+        }
+        
+        // Default to proposed label if supervisor response cannot be parsed or matched
+        await debugLog("Supervisor output was empty or could not be mapped. Using proposed label.");
+        return proposedLabel;
+    } catch (err) {
+        await debugLog("Supervisor validation failed with error (graceful fallback):", err.message);
+        return proposedLabel;
     }
 } 

@@ -15,16 +15,34 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // 2. Load active provider/model in footer
     async function loadActiveModelInfo() {
-        const result = await browser.storage.local.get(['aiProvider', 'geminiModel', 'geminiCustomModel', 'ollamaModel']);
+        const result = await browser.storage.local.get([
+            'aiProvider', 
+            'geminiModel', 
+            'geminiCustomModel', 
+            'ollamaModel', 
+            'geminiEnableFinalCheck', 
+            'geminiFinalCheckModel', 
+            'geminiFinalCheckCustomModel'
+        ]);
         const provider = result.aiProvider || 'gemini';
         
         let modelText = 'Unknown';
         if (provider === 'gemini') {
             const geminiModel = result.geminiModel || 'gemini-2.5-flash';
+            let primaryName = geminiModel;
             if (geminiModel === 'custom') {
-                modelText = result.geminiCustomModel ? `Gemini (${result.geminiCustomModel})` : 'Gemini (Custom)';
+                primaryName = result.geminiCustomModel || 'Custom';
+            }
+            
+            if (result.geminiEnableFinalCheck === true) {
+                const finalModel = result.geminiFinalCheckModel || 'gemini-3.5-flash';
+                let finalName = finalModel;
+                if (finalModel === 'custom') {
+                    finalName = result.geminiFinalCheckCustomModel || 'Custom';
+                }
+                modelText = `Gemini (${primaryName} + ${finalName})`;
             } else {
-                modelText = `Gemini (${geminiModel})`;
+                modelText = `Gemini (${primaryName})`;
             }
         } else if (provider === 'ollama') {
             modelText = result.ollamaModel ? `Ollama (${result.ollamaModel})` : 'Ollama';
