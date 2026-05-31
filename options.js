@@ -187,6 +187,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (provider !== 'ollama') {
             apiKeyInput.placeholder = `Enter your ${config.name} API key`;
         }
+        updateSaveButtonState();
     }
     
     // Update Gemini usage display
@@ -415,6 +416,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 input.style.borderColor = '';
                 input.title = '';
             }
+            updateSaveButtonState();
         });
         
         const testButton = document.createElement('button');
@@ -467,6 +469,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (confirm(`Remove API key #${index + 1}?`)) {
             geminiKeys.splice(index, 1);
             refreshGeminiKeysList();
+            updateSaveButtonState();
         }
     }
     
@@ -578,6 +581,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Add Gemini key button
     addGeminiKeyButton.addEventListener('click', () => {
         addGeminiKeyInput('');
+        updateSaveButtonState();
     });
     
     // Reset Gemini counter button
@@ -657,15 +661,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
         // Ollama doesn't require an API key, so hasValidApiKey stays true
         
-        if (labels.length === 0 || !hasValidApiKey) {
+        if (!hasValidApiKey) {
             saveButton.disabled = true;
             saveButton.classList.add('disabled');
             
-            let missingItems = [];
-            if (labels.length === 0) missingItems.push('folders/labels');
-            if (!hasValidApiKey) missingItems.push('API key');
-            
-            saveButton.title = `Please configure: ${missingItems.join(' and ')}`;
+            saveButton.title = 'Please configure a valid API key';
         } else {
             saveButton.disabled = false;
             saveButton.classList.remove('disabled');
